@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from .exporter import export_logbook
 from .gates import GateDecision, PreflightGate
-from .models import EXIT_CODES, ApprovedEntry, Status
+from .models import EXIT_CODES, ApprovedEntry, NoteRecord, Status
 from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
@@ -285,6 +285,30 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_note(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    note = NoteRecord(
+        work_date=d,
+        kind=args.kind,
+        text=args.text,
+        created_at=datetime.now(),
+    )
+    note_id = store.add_note(note)
+
+    payload = {
+        "status": "BERHASIL",
+        "note_id": note_id,
+        "work_date": d.isoformat(),
+        "kind": args.kind,
+        "text": args.text,
+    }
+    _print(payload)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
@@ -347,6 +371,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser(
+        "note",
+        parents=[common],
+        help="tambahkan catatan refleksi manual harian (aktivitas, pembelajaran, kendala)",
+    )
+    p.add_argument("text", help="isi catatan refleksi")
+    p.add_argument(
+        "--kind",
+        required=True,
+        choices=["aktivitas", "pembelajaran", "kendala"],
+        help="kategori catatan: aktivitas | pembelajaran | kendala",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_note)
 
     p = sub.add_parser(
         "gate",

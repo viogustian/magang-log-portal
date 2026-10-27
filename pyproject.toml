@@ -19,6 +19,7 @@ dev = ["pytest>=8", "beautifulsoup4", "lxml", "ruff"]
 
 [project.scripts]
 magang-portal = "magang_log.cli:main"
+magang-log = "magang_log.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

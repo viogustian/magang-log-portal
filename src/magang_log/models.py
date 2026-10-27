@@ -7,6 +7,8 @@ from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from .collectors.base import Evidence as Evidence
+
 
 class DayStatus(StrEnum):
     """Status sebuah hari di kalender portal (dibaca dari aria-label tombol hari)."""

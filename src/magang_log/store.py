@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
 
-from .models import EntryRecord, EvidenceItem, NoteRecord, RunRecord, Status
+from .models import EntryRecord, Evidence, EvidenceItem, NoteRecord, RunRecord, Status
 
 MIGRATIONS: list[tuple[int, str]] = [
     (
@@ -436,7 +436,7 @@ class LedgerStore:
 
     # --- Operasi Evidence ---
 
-    def save_evidence(self, items: list[EvidenceItem]) -> None:
+    def save_evidence(self, items: list[Evidence | EvidenceItem]) -> None:
         """Menyimpan butir bukti aktivitas secara batch."""
         sql = """
         INSERT INTO evidence (id, work_date, source, kind, ts, title, detail, strength)
