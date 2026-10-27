@@ -20,7 +20,7 @@ class DayStatus(StrEnum):
 
 
 class Status(StrEnum):
-    """Hasil satu eksekusi. Kosakata sama dengan proyek lama + dua status baru."""
+    """Hasil satu eksekusi. Kosakata status domain pipeline."""
 
     BERHASIL = "BERHASIL"
     GAGAL = "GAGAL"
@@ -31,6 +31,9 @@ class Status(StrEnum):
     DRYRUN = "DRYRUN"
     LOKASI_TIDAK_TERSEDIA = "LOKASI_TIDAK_TERSEDIA"  # baru: form portal meminta lokasi
     PERLU_TINDAKAN = "PERLU_TINDAKAN"  # baru: status hari tidak boleh diubah otomatis
+    PERLU_INPUT = "PERLU_INPUT"  # bukti tidak mencukupi, butuh catatan manual
+    PERLU_REVIEW = "PERLU_REVIEW"  # validasi butuh tinjauan manusia atau tertunda
+    VALIDATION_FAILED = "VALIDATION_FAILED"  # validasi draf gagal
 
 
 # Kode keluar CLI (lihat PRD bagian 11.3)
@@ -40,7 +43,10 @@ EXIT_CODES: dict[Status, int] = {
     Status.LIBUR: 0,
     Status.DRYRUN: 0,
     Status.PERLU_TINDAKAN: 10,
+    Status.PERLU_INPUT: 10,
+    Status.PERLU_REVIEW: 10,
     Status.LOGIN_DIPERLUKAN: 20,
+    Status.VALIDATION_FAILED: 30,
     Status.GAGAL: 40,
     Status.TERKUNCI: 40,
     Status.LOKASI_TIDAK_TERSEDIA: 40,
@@ -87,3 +93,61 @@ class PortalResult:
     note: str
     day: DayInfo | None = None
     screenshots: list[Path] = field(default_factory=list)
+
+
+@dataclass
+class RunRecord:
+    """Catatan audit satu eksekusi pipeline (tabel runs)."""
+
+    run_id: str
+    work_date: date
+    stage: str
+    status: Status | str
+    started_at: datetime
+    finished_at: datetime | None = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+    duration_ms: int = 0
+    error_code: str | None = None
+
+
+@dataclass
+class EntryRecord:
+    """Entri logbook harian beserta status siklus hidupnya (tabel entries)."""
+
+    work_date: date
+    draft_json: str
+    approved_json: str | None = None
+    prompt_version: str | None = None
+    model: str | None = None
+    edit_ratio: float | None = None
+    content_hash: str | None = None
+    portal_status: str | None = None
+    approved_at: datetime | None = None
+    submitted_at: datetime | None = None
+    verified_at: datetime | None = None
+
+
+@dataclass
+class EvidenceItem:
+    """Butir bukti aktivitas yang dikumpulkan dari sumber (tabel evidence)."""
+
+    id: str
+    work_date: date
+    source: str
+    kind: str
+    ts: str | datetime
+    title: str
+    detail: str = ""
+    strength: str = "strong"
+
+
+@dataclass
+class NoteRecord:
+    """Catatan refleksi manual harian (tabel notes)."""
+
+    work_date: date
+    kind: str  # 'aktivitas', 'pembelajaran', 'kendala'
+    text: str
+    id: int | None = None
+    created_at: datetime = field(default_factory=datetime.now)
