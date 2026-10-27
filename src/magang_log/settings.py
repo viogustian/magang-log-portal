@@ -119,13 +119,24 @@ class BrowserSourceSettings(StrictBaseModel):
     allow_domains: list[str] = Field(
         default_factory=lambda: ["github.com", "stackoverflow.com", "learn.microsoft.com"]
     )
+    allowlist: list[str] = Field(default_factory=list)
+    history_files: list[str] = Field(default_factory=list)
     send_to_llm: list[str] = Field(default_factory=lambda: ["title", "domain"])
+
+    def get_allowlist(self) -> list[str]:
+        """Mengambil daftar domain yang diizinkan (allowlist atau allow_domains)."""
+        return self.allowlist if self.allowlist else self.allow_domains
 
 
 class SourcesSettings(StrictBaseModel):
     git: GitSourceSettings = Field(default_factory=GitSourceSettings)
     notes: NotesSourceSettings = Field(default_factory=NotesSourceSettings)
     browser: BrowserSourceSettings = Field(default_factory=BrowserSourceSettings)
+    browser_history: BrowserSourceSettings | None = None
+
+    def get_browser(self) -> BrowserSourceSettings:
+        """Mengambil konfigurasi browser yang aktif (browser_history atau browser)."""
+        return self.browser_history if self.browser_history is not None else self.browser
 
 
 class NotifySettings(StrictBaseModel):

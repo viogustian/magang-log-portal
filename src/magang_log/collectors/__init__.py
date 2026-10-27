@@ -13,10 +13,12 @@ from .base import (
     compute_evidence_id,
     run_collectors,
 )
+from .browser import BrowserHistoryCollector, is_domain_allowed, sanitize_url
 from .git import GitCollector
 from .notes import NotesCollector
 
 __all__ = [
+    "BrowserHistoryCollector",
     "Collector",
     "CollectorFailure",
     "CollectorRunner",
@@ -27,5 +29,7 @@ __all__ = [
     "NotesCollector",
     "SourceConfig",
     "compute_evidence_id",
+    "is_domain_allowed",
     "run_collectors",
+    "sanitize_url",
 ]
