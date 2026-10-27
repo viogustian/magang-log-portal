@@ -80,6 +80,7 @@ class EvidenceDrafter:
         target_date: date,
         evidence: Sequence[Evidence | EvidenceItem],
         notes: Sequence[NoteRecord] | None = None,
+        feedback: str | None = None,
     ) -> LogEntryDraft:
         """Menghasilkan LogEntryDraft dari model AI dan memastikan kelengkapan needs_input."""
         system_prompt = load_prompt_template(
@@ -87,6 +88,12 @@ class EvidenceDrafter:
             prompts_dir=self.prompts_dir,
         )
         user_payload = self._format_evidence_payload(target_date, evidence, notes)
+        if feedback:
+            user_payload += (
+                "\n\n========================================\n"
+                f"[CATATAN VALIDASI & PERBAIKAN]:\n{feedback}\n"
+                "========================================"
+            )
 
         # Invocations strictly disable tool execution
         raw_result = self.model_client.generate(

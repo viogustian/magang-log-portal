@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from .drafter.stage import DraftingStage
 from .gates import GateDecision, PreflightGate, generate_run_id
 from .models import (
     EXIT_CODES,
@@ -374,7 +375,8 @@ class PipelineCoordinator:
         self.validator = validator
         self.approval = approval
         self.portal = portal
-        self.artifact_store = ArtifactStore(artifacts_dir or Path("data/runs"))
+        self.artifacts_dir = artifacts_dir or Path("data/runs")
+        self.artifact_store = ArtifactStore(self.artifacts_dir)
 
     def _record_audit_run(
         self,
@@ -523,7 +525,77 @@ class PipelineCoordinator:
                 draft = self.artifact_store.load_draft(target_date)
 
             if draft is None:
-                if self.drafter is not None:
+                if self.drafter is not None and isinstance(self.drafter, DraftingStage):
+                    notes = self.store.get_notes(target_date)
+                    stage_res = self.drafter.draft_and_validate(
+                        target_date=target_date,
+                        evidence=evidence,
+                        notes=notes,
+                        artifacts_dir=self.artifacts_dir,
+                    )
+                    tokens_in += stage_res.tokens_in
+                    tokens_out += stage_res.tokens_out
+                    artifacts.update(stage_res.artifacts)
+
+                    draft_json = stage_res.draft.model_dump_json(indent=2)
+                    draft = DraftResult(
+                        draft_json=draft_json,
+                        prompt_version=stage_res.draft.prompt_version,
+                        model=stage_res.draft.model,
+                        tokens_in=stage_res.tokens_in,
+                        tokens_out=stage_res.tokens_out,
+                    )
+                    artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
+
+                    draft_hash = compute_content_hash(draft.draft_json)
+                    self.store.save_entry(
+                        EntryRecord(
+                            work_date=target_date,
+                            draft_json=draft.draft_json,
+                            prompt_version=draft.prompt_version,
+                            model=draft.model,
+                            content_hash=draft_hash,
+                        )
+                    )
+
+                    validation = ValidationResult(
+                        is_valid=stage_res.validation.is_valid,
+                        errors=stage_res.validation.errors,
+                        warnings=stage_res.validation.warnings,
+                        validated_payload=stage_res.draft.model_dump(mode="json"),
+                    )
+                    artifacts["validation"] = self.artifact_store.save_validation(
+                        target_date, validation
+                    )
+
+                    if not stage_res.is_valid:
+                        sm.transition_to(PipelineState.PERLU_REVIEW)
+                        dur = self._record_audit_run(
+                            run_id,
+                            target_date,
+                            PipelineState.DRAFTED,
+                            Status.PERLU_REVIEW,
+                            started_at,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            error_code="VALIDATION_FAILED",
+                        )
+                        return PipelineResult(
+                            run_id=run_id,
+                            target_date=target_date,
+                            final_state=PipelineState.PERLU_REVIEW,
+                            status=Status.PERLU_REVIEW,
+                            exit_code=EXIT_CODES[Status.PERLU_REVIEW],
+                            duration_ms=dur,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            error_code="VALIDATION_FAILED",
+                            note=f"Validasi draf belum lolos setelah percobaan retry: {'; '.join(stage_res.validation.errors)}",
+                            artifacts=artifacts,
+                        )
+
+                    sm.transition_to(PipelineState.VALIDATED)
+                elif self.drafter is not None:
                     notes = self.store.get_notes(target_date)
                     draft = self.drafter.draft(target_date, evidence, notes)
                 else:
@@ -537,34 +609,38 @@ class PipelineCoordinator:
                     )
                     draft = DraftResult(draft_json=sample_json)
 
-            tokens_in += draft.tokens_in
-            tokens_out += draft.tokens_out
-            artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
+            if "draft" not in artifacts and draft is not None:
+                tokens_in += draft.tokens_in
+                tokens_out += draft.tokens_out
+                artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
 
-            # Catat draf ke ledger entri awal
-            draft_hash = compute_content_hash(draft.draft_json)
-            self.store.save_entry(
-                EntryRecord(
-                    work_date=target_date,
-                    draft_json=draft.draft_json,
-                    prompt_version=draft.prompt_version,
-                    model=draft.model,
-                    content_hash=draft_hash,
+                # Catat draf ke ledger entri awal
+                draft_hash = compute_content_hash(draft.draft_json)
+                self.store.save_entry(
+                    EntryRecord(
+                        work_date=target_date,
+                        draft_json=draft.draft_json,
+                        prompt_version=draft.prompt_version,
+                        model=draft.model,
+                        content_hash=draft_hash,
+                    )
                 )
-            )
 
             # 4. Validasi Draf: DRAFTED -> VALIDATED / PERLU_REVIEW / VALIDATION_FAILED
-            validation: ValidationResult | None = None
-            if resume:
-                validation = self.artifact_store.load_validation(target_date)
+            if sm.current_state != PipelineState.VALIDATED:
+                validation: ValidationResult | None = None
+                if resume:
+                    validation = self.artifact_store.load_validation(target_date)
 
-            if validation is None:
-                if self.validator is not None:
-                    validation = self.validator.validate(draft, target_date)
-                else:
-                    validation = ValidationResult(is_valid=True)
+                if validation is None:
+                    if self.validator is not None:
+                        validation = self.validator.validate(draft, target_date)
+                    else:
+                        validation = ValidationResult(is_valid=True)
 
-            artifacts["validation"] = self.artifact_store.save_validation(target_date, validation)
+                artifacts["validation"] = self.artifact_store.save_validation(
+                    target_date, validation
+                )
 
             if not validation.is_valid:
                 # Periksa apakah ini kegagalan validasi total atau perlu review manusia
@@ -594,7 +670,8 @@ class PipelineCoordinator:
                     artifacts=artifacts,
                 )
 
-            sm.transition_to(PipelineState.VALIDATED)
+            if sm.current_state != PipelineState.VALIDATED:
+                sm.transition_to(PipelineState.VALIDATED)
 
             # 5. VALIDATED -> APPROVED / PERLU_REVIEW
             approved_entry: ApprovedEntry | None = None
