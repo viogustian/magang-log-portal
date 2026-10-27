@@ -26,10 +26,7 @@ from playwright.sync_api import sync_playwright
 
 from ..models import ApprovedEntry, DayInfo, DayStatus, PortalResult, Status
 from . import selectors as sel
-
-
-class LoginRequired(Exception):
-    """Sesi habis / belum login: pengguna harus menjalankan `magang-portal login`."""
+from .session import LoginRequired, SessionManager
 
 
 class PortalError(Exception):
@@ -59,6 +56,7 @@ class PortalConfig:
     max_chars: int = 5000  # atribut maxlength pada textarea
     allow_location: bool = True  # False hanya untuk menguji jalur "lokasi tidak tersedia"
     login_markers: tuple[str, ...] = ("account.kemnaker.go.id", "/login", "/auth")
+    require_session: bool = False  # jika True, auth_state wajib valid sebelum membuka browser
 
 
 _EARLY_EXIT: dict[DayStatus, Status] = {
@@ -82,17 +80,28 @@ def _first_line(exc: BaseException) -> str:
 class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
     def __init__(self, config: PortalConfig | None = None) -> None:
         self.cfg = config or PortalConfig()
+        self.session_mgr = SessionManager(
+            auth_state=self.cfg.auth_state,
+            base_url=self.cfg.base_url,
+            channel=self.cfg.channel,
+            timeout_ms=self.cfg.timeout_ms,
+            login_markers=self.cfg.login_markers,
+        )
         self.page = None  # diisi di __enter__
 
     # ── siklus hidup ────────────────────────────────────────────────────────
 
     def __enter__(self) -> PlaywrightPortal:
         cfg = self.cfg
+        if cfg.require_session:
+            self.session_mgr.load_session()
+
         self._pw = sync_playwright().start()
         try:
             self._browser = self._pw.chromium.launch(headless=cfg.headless, channel=cfg.channel)
             kwargs: dict[str, str] = {}
             if cfg.auth_state.exists():
+                self.session_mgr.load_session()
                 kwargs["storage_state"] = str(cfg.auth_state)
             self._ctx = self._browser.new_context(**kwargs)
             self._ctx.set_default_timeout(cfg.timeout_ms)
@@ -126,12 +135,14 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
     def open_history(self, d: date) -> None:
         """Buka halaman Riwayat. Muat dari server (juga dipakai sebagai 'muat ulang')."""
         self.page.goto(self._url(d), wait_until="domcontentloaded")
+        self.session_mgr.check_page(self.page)
         try:
             sel.history_heading(self.page).wait_for(state="visible", timeout=self.cfg.timeout_ms)
         except PlaywrightTimeout:
+            self.session_mgr.check_page(self.page)
             url = self.page.url
             if any(marker in url for marker in self.cfg.login_markers):
-                raise LoginRequired(url) from None
+                raise LoginRequired(url=url) from None
             raise PortalError(f"halaman Riwayat Kehadiran tidak muncul (url: {url})") from None
 
     def read_day(self, d: date) -> DayInfo:

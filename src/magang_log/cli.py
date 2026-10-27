@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
-
-from playwright.sync_api import sync_playwright
 
 from .collectors.factory import collect_and_sanitize_evidence
 from .collectors.strength import build_drafting_payload, evaluate_evidence_strength
@@ -62,40 +59,42 @@ def _print(obj: object) -> None:
 
 def cmd_login(args: argparse.Namespace) -> int:
     cfg = _config(args)
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False, channel=cfg.channel)
-        context = browser.new_context()
-        page = context.new_page()
-        page.goto(cfg.base_url)
-        print("Login MANUAL di jendela browser (termasuk OTP/captcha bila ada).")
-        print("Setelah halaman 'Riwayat Kehadiran' tampil, kembali ke sini dan tekan Enter.")
-        input()
-        try:
-            sel.history_heading(page).wait_for(state="visible", timeout=5_000)
-        except Exception as exc:  # noqa: BLE001 - dilaporkan ke pengguna, bukan ditelan
-            print(
-                f"Halaman Riwayat Kehadiran belum tampil; sesi TIDAK disimpan ({exc.__class__.__name__})."
-            )
-            browser.close()
-            return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
-        cfg.auth_state.parent.mkdir(parents=True, exist_ok=True)
-        context.storage_state(path=str(cfg.auth_state))
-        try:
-            os.chmod(cfg.auth_state, 0o600)
-        except OSError:
-            pass  # Windows: izin POSIX tidak berlaku; folder data/ tetap di-gitignore
-        browser.close()
-    print(
-        f"Sesi disimpan di {cfg.auth_state}. File ini setara kunci akun: JANGAN di-commit/dibagikan."
+    from .portal.session import LoginRequired, SessionManager
+
+    mgr = SessionManager(
+        auth_state=cfg.auth_state,
+        base_url=cfg.base_url,
+        channel=cfg.channel,
+        timeout_ms=cfg.timeout_ms,
+        login_markers=cfg.login_markers,
     )
-    return 0
+    try:
+        success = mgr.interactive_login()
+        return 0 if success else EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+    except LoginRequired as exc:
+        print(f"Login tidak selesai: {exc}")
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Terjadi kesalahan saat proses login ({exc.__class__.__name__}): {exc}")
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     d = date.fromisoformat(args.date) if args.date else date.today()
-    with PlaywrightPortal(_config(args)) as portal:
-        report = portal.check(d)
+    from .portal.session import LoginRequired
+
+    try:
+        with PlaywrightPortal(_config(args)) as portal:
+            report = portal.check(d)
+    except LoginRequired as exc:
+        report = {
+            "date": d.isoformat(),
+            "login": False,
+            "error": f"LOGIN_DIPERLUKAN ({exc})",
+        }
     _print(report)
+    if "LOGIN_DIPERLUKAN" in str(report.get("error", "")):
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
     return 0 if report.get("login") and "error" not in report else EXIT_CODES[Status.GAGAL]
 
 
