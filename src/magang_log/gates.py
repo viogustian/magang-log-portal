@@ -236,8 +236,9 @@ class PreflightGate:
         target_date: date,
         content_hash: str | None = None,
         force: bool = False,
+        run_id: str | None = None,
     ) -> GateResult:
-        run_id = generate_run_id(target_date)
+        run_id = run_id or generate_run_id(target_date)
         start_time = datetime.now()
 
         # 1. Cek kalender & hari libur

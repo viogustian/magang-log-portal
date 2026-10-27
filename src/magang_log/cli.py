@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from .gates import GateDecision, PreflightGate
 from .models import EXIT_CODES, ApprovedEntry, Status
+from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
 from .settings import load_config
@@ -164,6 +165,100 @@ def cmd_submit(args: argparse.Namespace) -> int:
     return EXIT_CODES[result.status]
 
 
+class CliApprovalStage:
+    """Implementasi peninjauan dan persetujuan draf untuk CLI."""
+
+    def __init__(self, auto_approve: bool = False) -> None:
+        self.auto_approve = auto_approve
+
+    def review_and_approve(
+        self,
+        target_date: date,
+        draft: DraftResult,
+        validation: ValidationResult,
+    ) -> ApprovedEntry | None:
+        try:
+            parsed = json.loads(draft.draft_json)
+            aktivitas = parsed.get("aktivitas", "")
+            pembelajaran = parsed.get("pembelajaran", "")
+            kendala = parsed.get("kendala", "")
+        except (json.JSONDecodeError, TypeError):
+            aktivitas = draft.draft_json
+            pembelajaran = ""
+            kendala = ""
+
+        candidate = ApprovedEntry(
+            work_date=target_date,
+            aktivitas=aktivitas,
+            pembelajaran=pembelajaran,
+            kendala=kendala,
+            approved_at=datetime.now() if self.auto_approve else None,
+        )
+
+        if self.auto_approve:
+            return candidate
+
+        if not sys.stdin.isatty():
+            print(
+                "Draf belum disetujui dan tidak ada terminal interaktif. Menunda persetujuan (PERLU_REVIEW).",
+                file=sys.stderr,
+            )
+            return None
+
+        return _confirm_interactively(candidate)
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if args.date else date.today()
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    gate = PreflightGate.from_config_and_store(cfg, store)
+
+    portal = None
+    dry_run = bool(getattr(args, "dry_run", False))
+    auth_state_path = Path(args.auth_state)
+    if auth_state_path.exists():
+        try:
+            portal = PlaywrightPortal(_config(args))
+        except Exception:  # noqa: BLE001
+            portal = None
+
+    auto_approve = bool(getattr(args, "auto_approve", False))
+    approval = CliApprovalStage(auto_approve=auto_approve)
+
+    coordinator = PipelineCoordinator(
+        store=store,
+        preflight_gate=gate,
+        portal=portal,
+        approval=approval,
+        artifacts_dir=Path(getattr(args, "artifacts_dir", "data/runs")),
+    )
+
+    result = coordinator.run(
+        target_date=d,
+        dry_run=dry_run,
+        resume=bool(getattr(args, "resume", False)),
+        force=bool(getattr(args, "force", False)),
+    )
+
+    payload = {
+        "run_id": result.run_id,
+        "date": result.target_date.isoformat(),
+        "state": result.final_state.value,
+        "status": result.status.value,
+        "exit_code": result.exit_code,
+        "duration_ms": result.duration_ms,
+        "tokens_in": result.tokens_in,
+        "tokens_out": result.tokens_out,
+        "note": result.note,
+        "error_code": result.error_code,
+    }
+    _print(payload)
+    return result.exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
@@ -183,6 +278,25 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login", parents=[common], help="login manual sekali, simpan sesi").set_defaults(
         func=cmd_login
     )
+
+    p = sub.add_parser(
+        "run",
+        parents=[common],
+        help="jalankan alur pipeline harian logbook otomatis (coordinator & state machine)",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument(
+        "--dry-run", action="store_true", help="jalankan simulasi dry-run tanpa submit final"
+    )
+    p.add_argument(
+        "--resume", action="store_true", help="pulihkan eksekusi dari artifak sebelumnya"
+    )
+    p.add_argument(
+        "--force", action="store_true", help="paksa buat ulang draf (tidak melewati hari terkirim)"
+    )
+    p.add_argument("--auto-approve", action="store_true", help="setujui draf otomatis (pengetesan)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser(
         "gate",

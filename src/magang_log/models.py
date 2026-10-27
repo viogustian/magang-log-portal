@@ -20,7 +20,7 @@ class DayStatus(StrEnum):
 
 
 class Status(StrEnum):
-    """Hasil satu eksekusi. Kosakata sama dengan proyek lama + dua status baru."""
+    """Hasil satu eksekusi. Kosakata status domain pipeline."""
 
     BERHASIL = "BERHASIL"
     GAGAL = "GAGAL"
@@ -31,6 +31,9 @@ class Status(StrEnum):
     DRYRUN = "DRYRUN"
     LOKASI_TIDAK_TERSEDIA = "LOKASI_TIDAK_TERSEDIA"  # baru: form portal meminta lokasi
     PERLU_TINDAKAN = "PERLU_TINDAKAN"  # baru: status hari tidak boleh diubah otomatis
+    PERLU_INPUT = "PERLU_INPUT"  # bukti tidak mencukupi, butuh catatan manual
+    PERLU_REVIEW = "PERLU_REVIEW"  # validasi butuh tinjauan manusia atau tertunda
+    VALIDATION_FAILED = "VALIDATION_FAILED"  # validasi draf gagal
 
 
 # Kode keluar CLI (lihat PRD bagian 11.3)
@@ -40,7 +43,10 @@ EXIT_CODES: dict[Status, int] = {
     Status.LIBUR: 0,
     Status.DRYRUN: 0,
     Status.PERLU_TINDAKAN: 10,
+    Status.PERLU_INPUT: 10,
+    Status.PERLU_REVIEW: 10,
     Status.LOGIN_DIPERLUKAN: 20,
+    Status.VALIDATION_FAILED: 30,
     Status.GAGAL: 40,
     Status.TERKUNCI: 40,
     Status.LOKASI_TIDAK_TERSEDIA: 40,

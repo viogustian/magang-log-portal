@@ -481,3 +481,73 @@ class LedgerStore:
                 )
                 for r in rows
             ]
+
+    # Convenience aliases
+    get_evidence = get_evidence_for_date
+    get_notes = get_notes_for_date
+
+    def list_runs(self, target_date: date | None = None) -> list[RunRecord]:
+        """Alias untuk get_runs_for_date atau seluruh runs."""
+        if target_date is not None:
+            return self.get_runs_for_date(target_date)
+        sql = "SELECT * FROM runs ORDER BY started_at ASC;"
+        with self.connection() as conn:
+            rows = conn.execute(sql).fetchall()
+            return [
+                RunRecord(
+                    run_id=r["run_id"],
+                    work_date=_parse_date(r["work_date"]),
+                    stage=r["stage"],
+                    status=Status(r["status"])
+                    if r["status"] in Status.__members__
+                    else r["status"],
+                    started_at=_parse_datetime(r["started_at"]) or datetime.now(),
+                    finished_at=_parse_datetime(r["finished_at"]),
+                    tokens_in=r["tokens_in"],
+                    tokens_out=r["tokens_out"],
+                    duration_ms=r["duration_ms"],
+                    error_code=r["error_code"],
+                )
+                for r in rows
+            ]
+
+    def set_approved(
+        self,
+        work_date: date,
+        approved_json: str,
+        approved_at: datetime,
+        edit_ratio: float | None = None,
+    ) -> None:
+        """Memperbarui draf yang disetujui beserta rasio edit."""
+        self.update_entry_approval(
+            work_date=work_date,
+            approved_json=approved_json,
+            approved_at=approved_at,
+            edit_ratio=edit_ratio,
+        )
+
+    def mark_submitted(
+        self,
+        work_date: date,
+        portal_status: str = "BERHASIL",
+        submitted_at: datetime | None = None,
+    ) -> None:
+        """Memperbarui status pengiriman entri."""
+        self.update_entry_submission(
+            work_date=work_date,
+            portal_status=portal_status,
+            submitted_at=submitted_at or datetime.now(),
+        )
+
+    def mark_verified(
+        self,
+        work_date: date,
+        portal_status: str = "SUDAH_TERKIRIM",
+        verified_at: datetime | None = None,
+    ) -> None:
+        """Memperbarui status verifikasi entri."""
+        self.update_entry_submission(
+            work_date=work_date,
+            portal_status=portal_status,
+            verified_at=verified_at or datetime.now(),
+        )
