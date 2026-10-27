@@ -16,20 +16,30 @@ from .base import (
 from .browser import BrowserHistoryCollector, is_domain_allowed, sanitize_url
 from .git import GitCollector
 from .notes import NotesCollector
+from .privacy import (
+    DeterministicPrivacyEngine,
+    PrivacyConfig,
+    PrivacyFilter,
+    sanitize_evidence,
+)
 
 __all__ = [
     "BrowserHistoryCollector",
     "Collector",
     "CollectorFailure",
     "CollectorRunner",
+    "DeterministicPrivacyEngine",
     "Evidence",
     "EvidenceSource",
     "EvidenceStrength",
     "GitCollector",
     "NotesCollector",
+    "PrivacyConfig",
+    "PrivacyFilter",
     "SourceConfig",
     "compute_evidence_id",
     "is_domain_allowed",
     "run_collectors",
+    "sanitize_evidence",
     "sanitize_url",
 ]

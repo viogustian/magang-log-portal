@@ -173,7 +173,11 @@ class GitCollector:
                     continue
 
                 # Konversi timestamp ke UTC
-                utc_ts = dt.astimezone(timezone.utc) if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+                utc_ts = (
+                    dt.astimezone(timezone.utc)
+                    if dt.tzinfo is not None
+                    else dt.replace(tzinfo=timezone.utc)
+                )
 
                 # Ambil statistik perubahan berkas (--numstat)
                 numstat_out = _run_git_cmd(
@@ -189,7 +193,11 @@ class GitCollector:
                     for line in numstat_out.splitlines():
                         parts_stat = line.split("\t")
                         if len(parts_stat) >= 3:
-                            add_str, del_str, file_path = parts_stat[0], parts_stat[1], parts_stat[2]
+                            add_str, del_str, file_path = (
+                                parts_stat[0],
+                                parts_stat[1],
+                                parts_stat[2],
+                            )
                             add_cnt = int(add_str) if add_str.isdigit() else 0
                             del_cnt = int(del_str) if del_str.isdigit() else 0
                             total_add += add_cnt

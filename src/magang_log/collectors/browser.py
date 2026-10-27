@@ -65,7 +65,9 @@ def _convert_browser_timestamp(ts: int | float) -> datetime | None:
         return None
 
 
-def get_default_browser_history_paths(browsers: Sequence[str] = ("chrome", "edge", "brave")) -> list[Path]:
+def get_default_browser_history_paths(
+    browsers: Sequence[str] = ("chrome", "edge", "brave"),
+) -> list[Path]:
     """Mendeteksi lokasi file riwayat peramban default berdasarkan sistem operasi."""
     paths: list[Path] = []
     browser_names = {b.lower() for b in browsers}
@@ -79,7 +81,9 @@ def get_default_browser_history_paths(browsers: Sequence[str] = ("chrome", "edge
             if "edge" in browser_names:
                 paths.append(base / "Microsoft" / "Edge" / "User Data" / "Default" / "History")
             if "brave" in browser_names:
-                paths.append(base / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default" / "History")
+                paths.append(
+                    base / "BraveSoftware" / "Brave-Browser" / "User Data" / "Default" / "History"
+                )
     elif sys.platform == "darwin":
         home = Path.home()
         base = home / "Library" / "Application Support"
@@ -234,7 +238,9 @@ class BrowserHistoryCollector:
                     """
                     rows = conn.execute(query_urls).fetchall()
                 except sqlite3.OperationalError as exc:
-                    logger.warning("Skema database riwayat tidak dikenali pada %s: %s", db_path, exc)
+                    logger.warning(
+                        "Skema database riwayat tidak dikenali pada %s: %s", db_path, exc
+                    )
                     return []
 
             seen_keys: set[tuple[str, str]] = set()
