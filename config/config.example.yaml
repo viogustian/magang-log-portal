@@ -1,0 +1,42 @@
+timezone: Asia/Jakarta
+workdays: [mon, tue, wed, thu, fri]
+holidays_file: "config/holidays.yaml"
+
+portal:
+  base_url: "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat"
+  auth_state: "data/auth/state.json"
+  headless: true
+
+rules:
+  min_chars: 100           # dari form portal: "Minimal 100 karakter" (F-10)
+  max_chars: 5000          # maxlength textarea portal (F-10)
+
+review:
+  mode: review             # review | auto_if_confident
+
+llm:
+  provider: gemini         # gemini via official google-genai SDK (Free Tier AI Studio)
+  model: "gemini-2.5-flash"
+  temperature: 0.2
+  max_input_tokens: 6000
+  daily_token_budget: 20000
+
+sources:
+  git:
+    enabled: true
+    repos: ["~/Projek/<nama-repo>"]
+    include_diff: false
+    send_to_llm: [commit_message, file_paths_relative]
+  notes:
+    enabled: true
+  browser:                 # v1.1
+    enabled: false
+    allow_domains: ["github.com", "stackoverflow.com", "learn.microsoft.com"]
+    send_to_llm: [title, domain]
+
+notify:
+  channels: [toast]
+
+retention_days:
+  evidence: 14
+  artifacts: 30

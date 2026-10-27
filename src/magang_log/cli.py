@@ -12,9 +12,11 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from .gates import CalendarGate, GateDecision
 from .models import EXIT_CODES, ApprovedEntry, Status
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
+from .settings import load_config
 
 CONFIRM_WORD = "SETUJU"
 
@@ -89,6 +91,24 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if report.get("login") and "error" not in report else EXIT_CODES[Status.GAGAL]
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if args.date else date.today()
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    gate = CalendarGate.from_config(cfg)
+    result = gate.inspect(d)
+
+    status_label = Status.LIBUR if result.decision == GateDecision.LIBUR else Status.BERHASIL
+    payload = {
+        "status": status_label,
+        "decision": result.decision,
+        "reason": result.reason,
+        "date": d.isoformat(),
+    }
+    _print(payload)
+    return result.exit_code
+
+
 def cmd_fill(args: argparse.Namespace) -> int:
     entry = _load_entry(Path(args.entry))
     with PlaywrightPortal(_config(args)) as portal:
@@ -143,11 +163,20 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--headless", action="store_true", help="tanpa jendela (uji dulu lewat `check`)"
     )
+    common.add_argument("--config", help="path file konfigurasi YAML (default: config/config.yaml)")
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("login", parents=[common], help="login manual sekali, simpan sesi").set_defaults(
         func=cmd_login
     )
+
+    p = sub.add_parser(
+        "gate",
+        parents=[common],
+        help="pre-flight gate kalender: hari kerja, libur nasional, cuti pribadi",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.set_defaults(func=cmd_gate)
 
     p = sub.add_parser(
         "check", parents=[common], help="diagnosis read-only: login, status hari, lokasi, selector"

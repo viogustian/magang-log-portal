@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "Modul portal MagangHub (Playwright): bagian M3 dari PRD magang-log v2"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["playwright>=1.40"]
+dependencies = [
+    "playwright>=1.40",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "beautifulsoup4", "lxml", "ruff"]
