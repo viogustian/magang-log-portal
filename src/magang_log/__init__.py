@@ -1,3 +1,4 @@
+from .exporter import compile_logbook_markdown, export_logbook
 from .pipeline import (
     InvalidTransitionError,
     PipelineCoordinator,
@@ -15,4 +16,6 @@ __all__ = [
     "PipelineState",
     "StateMachine",
     "__version__",
+    "compile_logbook_markdown",
+    "export_logbook",
 ]

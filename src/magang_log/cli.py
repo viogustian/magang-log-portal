@@ -12,6 +12,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from .exporter import export_logbook
 from .gates import GateDecision, PreflightGate
 from .models import EXIT_CODES, ApprovedEntry, Status
 from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
@@ -259,6 +260,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    from_date = date.fromisoformat(args.from_date) if getattr(args, "from_date", None) else None
+    to_date = date.fromisoformat(args.to_date) if getattr(args, "to_date", None) else None
+    output_path = getattr(args, "output", None) or "logbook.md"
+
+    out_file, count = export_logbook(
+        store=store,
+        output_path=output_path,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    payload = {
+        "status": "BERHASIL",
+        "output": str(out_file),
+        "entries_count": count,
+        "from_date": from_date.isoformat() if from_date else None,
+        "to_date": to_date.isoformat() if to_date else None,
+    }
+    _print(payload)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
@@ -297,6 +323,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--auto-approve", action="store_true", help="setujui draf otomatis (pengetesan)")
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser(
+        "export",
+        parents=[common],
+        help="ekspor entri logbook yang disetujui ke file Markdown UTF-8 bersih",
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        default="logbook.md",
+        help="path output file markdown (default: logbook.md)",
+    )
+    p.add_argument(
+        "--from",
+        dest="from_date",
+        help="filter batas awal tanggal (YYYY-MM-DD)",
+    )
+    p.add_argument(
+        "--to",
+        dest="to_date",
+        help="filter batas akhir tanggal (YYYY-MM-DD)",
+    )
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser(
         "gate",

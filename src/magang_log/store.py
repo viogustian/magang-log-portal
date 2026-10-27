@@ -340,6 +340,48 @@ class LedgerStore:
                 verified_at=_parse_datetime(row["verified_at"]),
             )
 
+    def get_approved_entries(
+        self,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[EntryRecord]:
+        """Mengambil seluruh entri yang sudah disetujui (approved_json IS NOT NULL)
+
+        secara kronologis berdasarkan work_date, dengan filter opsional rentang tanggal.
+        """
+        clauses = ["approved_json IS NOT NULL"]
+        params: list[str] = []
+
+        if from_date is not None:
+            clauses.append("work_date >= ?")
+            params.append(_format_date(from_date))
+
+        if to_date is not None:
+            clauses.append("work_date <= ?")
+            params.append(_format_date(to_date))
+
+        where_sql = " AND ".join(clauses)
+        sql = f"SELECT * FROM entries WHERE {where_sql} ORDER BY work_date ASC;"
+
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                EntryRecord(
+                    work_date=_parse_date(row["work_date"]),
+                    draft_json=row["draft_json"],
+                    approved_json=row["approved_json"],
+                    prompt_version=row["prompt_version"],
+                    model=row["model"],
+                    edit_ratio=row["edit_ratio"],
+                    content_hash=row["content_hash"],
+                    portal_status=row["portal_status"],
+                    approved_at=_parse_datetime(row["approved_at"]),
+                    submitted_at=_parse_datetime(row["submitted_at"]),
+                    verified_at=_parse_datetime(row["verified_at"]),
+                )
+                for row in rows
+            ]
+
     def update_entry_approval(
         self,
         work_date: date,
