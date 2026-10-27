@@ -101,7 +101,7 @@ class GitSourceSettings(StrictBaseModel):
     repositories: list[str] = Field(default_factory=list)
     author_email: str | None = None
     include_diff: bool = False
-    send_to_llm: list[str] = Field(
+    send_to_llm: bool | list[str] = Field(
         default_factory=lambda: ["commit_message", "file_paths_relative"]
     )
 
@@ -112,6 +112,7 @@ class GitSourceSettings(StrictBaseModel):
 
 class NotesSourceSettings(StrictBaseModel):
     enabled: bool = True
+    send_to_llm: bool | list[str] = True
 
 
 class BrowserSourceSettings(StrictBaseModel):
@@ -121,7 +122,7 @@ class BrowserSourceSettings(StrictBaseModel):
     )
     allowlist: list[str] = Field(default_factory=list)
     history_files: list[str] = Field(default_factory=list)
-    send_to_llm: list[str] = Field(default_factory=lambda: ["title", "domain"])
+    send_to_llm: bool | list[str] = Field(default_factory=lambda: ["title", "domain"])
 
     def get_allowlist(self) -> list[str]:
         """Mengambil daftar domain yang diizinkan (allowlist atau allow_domains)."""

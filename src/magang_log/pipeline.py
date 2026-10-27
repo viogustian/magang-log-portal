@@ -492,6 +492,15 @@ class PipelineCoordinator:
                     tokens_out=tokens_out,
                     error_code="INSUFFICIENT_EVIDENCE",
                 )
+                from .notify import send_system_notification
+
+                send_system_notification(
+                    title="Magang Log - Bukti Kurang",
+                    message=(
+                        f"Tidak ada bukti berkategori 'strong' untuk tanggal {target_date.isoformat()}. "
+                        "Butuh catatan input pengguna."
+                    ),
+                )
                 return PipelineResult(
                     run_id=run_id,
                     target_date=target_date,

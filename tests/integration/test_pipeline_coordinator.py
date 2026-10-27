@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from magang_log.gates import CalendarGate, HolidayProvider, PreflightGate
 from magang_log.models import (
@@ -102,12 +102,14 @@ def test_pipeline_insufficient_evidence_halts_perlu_input(tmp_path: Path) -> Non
     ]
 
     coord, store, artifacts_dir = _setup_coordinator(tmp_path, collector=collector)
-    res = coord.run(target_date=date(2026, 10, 27))
+    with patch("magang_log.notify.send_system_notification") as mock_notify:
+        res = coord.run(target_date=date(2026, 10, 27))
 
     assert res.final_state == PipelineState.PERLU_INPUT
     assert res.status == Status.PERLU_INPUT
     assert res.exit_code == 10
     assert res.error_code == "INSUFFICIENT_EVIDENCE"
+    mock_notify.assert_called_once()
 
     # Verifikasi artifak disimpan
     evidence_file = artifacts_dir / "2026-10-27" / "evidence.json"

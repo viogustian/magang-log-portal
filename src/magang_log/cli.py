@@ -12,9 +12,12 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from .collectors.factory import collect_and_sanitize_evidence
+from .collectors.strength import build_drafting_payload, evaluate_evidence_strength
 from .exporter import export_logbook
 from .gates import GateDecision, PreflightGate
-from .models import EXIT_CODES, ApprovedEntry, NoteRecord, Status
+from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status
+from .notify import send_system_notification
 from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
@@ -309,7 +312,71 @@ def cmd_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preview_payload(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    # 1. Jalankan kolektor aktif dan sanitasi privasi deterministik (100% offline)
+    sanitized_evidence = collect_and_sanitize_evidence(d, cfg, store)
+
+    # 2. Evaluasi kekuatan bukti
+    strength_res = evaluate_evidence_strength(sanitized_evidence)
+
+    # 3. Rakit finalized drafting payload dengan filter send_to_llm
+    payload = build_drafting_payload(d, sanitized_evidence, cfg)
+
+    # 4. Cetak metadata diagnostik human-readable & payload JSON
+    print("=" * 60)
+    print("DIAGNOSTIC METADATA - OFFLINE PAYLOAD PREVIEW")
+    print("=" * 60)
+    print(f"Tanggal Kerja  : {d.isoformat()}")
+    print(f"Total Bukti    : {strength_res.total_count}")
+    print(f"Bukti Kuat     : {strength_res.strong_count} (strong)")
+    print(f"Bukti Lemah    : {strength_res.weak_count} (weak)")
+    print(f"Keputusan Gate : {strength_res.decision}")
+    print(f"Alasan         : {strength_res.reason}")
+    if payload["metadata"]["excluded_sources"]:
+        print(
+            f"Sumber Dikecualikan: {', '.join(payload['metadata']['excluded_sources'])} "
+            "(via send_to_llm: false)"
+        )
+    print("=" * 60)
+    print("FINALIZED DRAFTING PAYLOAD (JSON)")
+    print("=" * 60)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    # Jika zero strong evidence, catat status PERLU_INPUT di ledger dan picu notifikasi
+    if not strength_res.passed:
+        send_system_notification(
+            title="Magang Log - Bukti Kurang",
+            message=(
+                f"Tidak ada bukti berkategori 'strong' untuk tanggal {d.isoformat()}. "
+                "Silakan tambahkan catatan manual."
+            ),
+            channels=cfg.notify.channels,
+        )
+        run_id = f"run-{d.strftime('%Y%m%d')}-preview"
+        store.record_run(
+            RunRecord(
+                run_id=run_id,
+                work_date=d,
+                stage="COLLECTED",
+                status=Status.PERLU_INPUT,
+                started_at=datetime.now(),
+                finished_at=datetime.now(),
+                error_code="INSUFFICIENT_EVIDENCE",
+            )
+        )
+        return 10
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
+
     parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--base-url", help="default: portal MagangHub (halaman Riwayat)")
@@ -422,6 +489,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--entry", required=True, help="file JSON entri")
     p.set_defaults(func=cmd_submit)
+
+    p = sub.add_parser(
+        "preview-payload",
+        parents=[common],
+        help="preview offline payload JSON yang akan dikirim ke LLM dan diagnostik gate kekuatan bukti",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_preview_payload)
+
     return parser
 
 
