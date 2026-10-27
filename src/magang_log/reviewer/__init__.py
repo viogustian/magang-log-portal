@@ -1,5 +1,9 @@
 """Paket peninjauan interaktif terminal (ReviewSession) dan kontrak hukum ApprovedEntry."""
 
+from .auto_approval import (
+    AutoApprovalDecision,
+    ConditionalAutoApprovalEngine,
+)
 from .session import (
     ReviewSession,
     compute_content_hash,
@@ -9,6 +13,8 @@ from .session import (
 )
 
 __all__ = [
+    "AutoApprovalDecision",
+    "ConditionalAutoApprovalEngine",
     "ReviewSession",
     "compute_content_hash",
     "compute_edit_ratio",

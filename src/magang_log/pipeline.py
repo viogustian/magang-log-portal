@@ -316,7 +316,9 @@ class ArtifactStore:
             "is_valid": validation.is_valid,
             "errors": validation.errors,
             "warnings": validation.warnings,
-            "validated_payload": validation.validated_payload,
+            "validated_payload": getattr(validation, "validated_payload", None),
+            "grounding_score": getattr(validation, "grounding_score", None),
+            "detected_filler": getattr(validation, "detected_filler", None),
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -385,6 +387,7 @@ class PipelineCoordinator:
         approval: ApprovalStage | None = None,
         portal: PortalStage | None = None,
         artifacts_dir: Path | None = None,
+        auto_approval_engine: Any | None = None,
     ) -> None:
         self.store = store
         self.preflight_gate = preflight_gate
@@ -395,6 +398,7 @@ class PipelineCoordinator:
         self.portal = portal
         self.artifacts_dir = artifacts_dir or Path("data/runs")
         self.artifact_store = ArtifactStore(self.artifacts_dir)
+        self.auto_approval_engine = auto_approval_engine
 
     def _record_audit_run(
         self,
@@ -695,6 +699,22 @@ class PipelineCoordinator:
             approved_entry: ApprovedEntry | None = None
             if resume:
                 approved_entry = self.artifact_store.load_approval(target_date)
+
+            if approved_entry is None and self.auto_approval_engine is not None:
+                eval_draft = draft
+                if hasattr(draft, "draft_json"):
+                    try:
+                        eval_draft = LogEntryDraft.model_validate_json(draft.draft_json)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                decision = self.auto_approval_engine.assess(
+                    target_date=target_date,
+                    draft=eval_draft,
+                    validation=validation,
+                    evidence=evidence,
+                )
+                if decision.eligible and decision.entry is not None:
+                    approved_entry = decision.entry
 
             if approved_entry is None:
                 if self.approval is not None:

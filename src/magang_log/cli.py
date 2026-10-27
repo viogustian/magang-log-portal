@@ -234,12 +234,26 @@ def cmd_run(args: argparse.Namespace) -> int:
     auto_approve = bool(getattr(args, "auto_approve", False))
     approval = CliApprovalStage(auto_approve=auto_approve)
 
+    auto_approval_engine = None
+    if (
+        getattr(cfg.review, "auto_if_confident", False)
+        or getattr(cfg.review, "mode", "") == "auto_if_confident"
+    ):
+        from .reviewer import ConditionalAutoApprovalEngine
+
+        auto_approval_engine = ConditionalAutoApprovalEngine(
+            store=store,
+            config=cfg,
+            artifact_store=ArtifactStore(Path(getattr(args, "artifacts_dir", "data/runs"))),
+        )
+
     coordinator = PipelineCoordinator(
         store=store,
         preflight_gate=gate,
         portal=portal,
         approval=approval,
         artifacts_dir=Path(getattr(args, "artifacts_dir", "data/runs")),
+        auto_approval_engine=auto_approval_engine,
     )
 
     result = coordinator.run(

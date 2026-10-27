@@ -85,6 +85,7 @@ class RulesSettings(StrictBaseModel):
 
 class ReviewSettings(StrictBaseModel):
     mode: str = "review"
+    auto_if_confident: bool = False
 
 
 class LLMSettings(StrictBaseModel):

@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from .models import EntryRecord, Evidence, EvidenceItem, NoteRecord, RunRecord, Status
 
@@ -381,6 +381,53 @@ class LedgerStore:
                 )
                 for row in rows
             ]
+
+    def get_recent_approved_entries(
+        self,
+        limit: int = 10,
+        before_date: date | None = None,
+    ) -> list[EntryRecord]:
+        """Mengambil entri logbook terbaru yang sudah disetujui (maksimal `limit` entri).
+
+        Diurutkan secara kronologis terbalik (work_date DESC).
+        """
+        clauses = ["(approved_at IS NOT NULL OR approved_json IS NOT NULL)"]
+        params: list[Any] = []
+        if before_date is not None:
+            clauses.append("work_date < ?")
+            params.append(_format_date(before_date))
+
+        where_sql = " AND ".join(clauses)
+        sql = f"SELECT * FROM entries WHERE {where_sql} ORDER BY work_date DESC LIMIT ?;"
+        params.append(limit)
+
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                EntryRecord(
+                    work_date=_parse_date(row["work_date"]),
+                    draft_json=row["draft_json"],
+                    approved_json=row["approved_json"],
+                    prompt_version=row["prompt_version"],
+                    model=row["model"],
+                    edit_ratio=row["edit_ratio"],
+                    content_hash=row["content_hash"],
+                    portal_status=row["portal_status"],
+                    approved_at=_parse_datetime(row["approved_at"]),
+                    submitted_at=_parse_datetime(row["submitted_at"]),
+                    verified_at=_parse_datetime(row["verified_at"]),
+                )
+                for row in rows
+            ]
+
+    def get_historical_edit_ratios(
+        self,
+        limit: int = 10,
+        before_date: date | None = None,
+    ) -> list[float]:
+        """Mengambil daftar edit_ratio dari entri-entri yang telah disetujui sebelumnya."""
+        entries = self.get_recent_approved_entries(limit=limit, before_date=before_date)
+        return [float(e.edit_ratio) if e.edit_ratio is not None else 0.0 for e in entries]
 
     def update_entry_approval(
         self,
