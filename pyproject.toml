@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magang-log"
+version = "0.1.0"
+description = "Modul portal MagangHub (Playwright): bagian M3 dari PRD magang-log v2"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["playwright>=1.40"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "beautifulsoup4", "lxml", "ruff"]
+
+[project.scripts]
+magang-portal = "magang_log.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# BLE001/S110: larang menelan exception diam-diam (lihat PRD, NFR-MNT-01)
+select = ["E", "F", "I", "B", "BLE", "S110"]
+# Formatter yang membungkus kode; kalimat pesan untuk pengguna boleh lebih panjang dari 100 kolom.
+ignore = ["E501"]

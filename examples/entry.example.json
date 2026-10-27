@@ -1,0 +1,6 @@
+{
+  "work_date": "2026-10-27",
+  "aktivitas": "CONTOH, ganti dengan isi sendiri. Menulis unit test untuk modul validasi dan memperbaiki dua bug pada endpoint laporan berdasarkan hasil review mentor; semua perubahan di-commit ke branch fitur.",
+  "pembelajaran": "CONTOH, ganti dengan isi sendiri. Memahami perbedaan unit test dan integration test serta cara memakai fixture agar data uji terisolasi antar skenario pengujian.",
+  "kendala": "CONTOH, ganti dengan isi sendiri. Satu test gagal intermiten karena bergantung pada urutan eksekusi; diselesaikan dengan membuat data uji terpisah untuk setiap test."
+}

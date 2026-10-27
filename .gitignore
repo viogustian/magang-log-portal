@@ -1,0 +1,209 @@
+# ==============================================================================
+# Git Ignore - Software, AI & Automation Engineering
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Project-Specific Runtime, Data & Secrets
+# ------------------------------------------------------------------------------
+# Data directory (sesi portal, cookie, screenshot, audit log, storage runtime)
+data/
+data/**
+
+# Project specific state & ledger databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+state.db
+state.json
+auth_state.json
+run-log.txt
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+credentials.json
+client_secret*.json
+service_account*.json
+
+# ------------------------------------------------------------------------------
+# 2. Python Environment, Bytecode & Packaging
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+*.dll
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+virtualenv/
+.Python
+
+# Distribution, build & packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+pip-delete-this-directory.txt
+
+# ------------------------------------------------------------------------------
+# 3. Code Quality, Testing & Type Checking
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.hypothesis/
+
+# Coverage & testing reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+.tox/
+.nox/
+
+# ------------------------------------------------------------------------------
+# 4. AI Engineering & Data Science (Models, Weights, Embeddings, Datasets)
+# ------------------------------------------------------------------------------
+# Jupyter Notebooks checkpoints & autosaves
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# Model weights, tensors & checkpoints (large binary files)
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.ckpt
+
+# Experiment tracking & model registries
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+
+# Hugging Face, LLM & framework caches
+.cache/
+hf_cache/
+transformers_cache/
+torch_cache/
+triton_cache/
+prompt_cache/
+
+# Local Vector Databases & search indices
+chroma/
+chroma_db/
+.chroma/
+qdrant_storage/
+faiss_index/
+lancedb/
+
+# Large local dataset dumps
+data_raw/
+datasets/
+*.parquet
+*.feather
+*.arrow
+
+# ------------------------------------------------------------------------------
+# 5. AI Automation, Web Scraping & Browser Automation (Playwright/Selenium)
+# ------------------------------------------------------------------------------
+# Playwright test execution results & reports
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# Browser profiles, user data & cookies
+.chrome/
+.chromium/
+chrome-profile/
+user-data-dir/
+
+# Traces, recordings & media artifacts
+*.trace.zip
+*.webm
+*.mp4
+screenshots/
+artifacts/
+
+# General automation logs
+logs/
+*.log
+agent_traces/
+
+# ------------------------------------------------------------------------------
+# 6. IDEs, Code Editors & OS Metadata
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+
+# JetBrains (PyCharm, IntelliJ, etc.)
+.idea/
+
+# VS Code / Cursor / Windsurf
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+
+.agents
+.scratch
+prd.md
