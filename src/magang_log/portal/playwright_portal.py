@@ -215,6 +215,10 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                 save = sel.save_button(self.page)
                 report["save_button_found"] = save.count() == 1
                 report["save_button_enabled"] = save.is_enabled() if save.count() == 1 else None
+                report["selectors_health"] = sel.check_selectors_health(self.page, d)
+                report["all_selectors_healthy"] = all(
+                    bool(v.get("healthy")) for v in report["selectors_health"].values()
+                )
         except LoginRequired as exc:
             report["error"] = f"LOGIN_DIPERLUKAN ({_first_line(exc)})"
         except (PortalError, PlaywrightError) as exc:

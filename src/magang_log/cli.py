@@ -98,6 +98,81 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if report.get("login") and "error" not in report else EXIT_CODES[Status.GAGAL]
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    from .portal.session import LoginRequired
+
+    try:
+        with PlaywrightPortal(_config(args)) as portal:
+            report = portal.check(d)
+    except LoginRequired as exc:
+        report = {
+            "date": d.isoformat(),
+            "login": False,
+            "error": f"LOGIN_DIPERLUKAN ({exc})",
+        }
+    except Exception as exc:  # noqa: BLE001
+        report = {
+            "date": d.isoformat(),
+            "login": False,
+            "error": f"GAGAL ({exc})",
+        }
+
+    if getattr(args, "json", False):
+        _print(report)
+    else:
+        print("=" * 60)
+        print(f"CANARY DIAGNOSTIK KESEHATAN PORTAL ({d.isoformat()})")
+        print("=" * 60)
+        login_status = "TERHUBUNG (VALID)" if report.get("login") else "BELUM LOGIN / SESI HABIS"
+        print(f"Status Autentikasi : {login_status}")
+        if report.get("status"):
+            print(f"Status Hari        : {report['status']} ({report.get('label', '')})")
+        if "location" in report:
+            print(f"Izin Lokasi        : {'BERHASIL' if report['location'] else 'GAGAL / DITOLAK'}")
+
+        selectors = report.get("selectors_health", {})
+        if selectors:
+            print("\nSTATUS KESEHATAN SELECTOR SEMANTIK:")
+            print("-" * 60)
+            for key, info in selectors.items():
+                mark = "[PASS]" if info.get("healthy") else "[FAIL]"
+                desc = info.get("description", key)
+                cnt = info.get("count", 0)
+                print(f"{mark} {desc:<45}: count={cnt}")
+            print("-" * 60)
+
+        if report.get("error"):
+            print(f"\nCATATAN KESALAHAN : {report['error']}")
+            if "LOGIN_DIPERLUKAN" in report["error"]:
+                print("PANDUAN PERBAIKAN : Jalankan 'magang-portal login' untuk login ulang.")
+            else:
+                print(
+                    "PANDUAN PERBAIKAN : Perbarui src/magang_log/portal/selectors.py sesuai snapshot DOM portal."
+                )
+
+        all_ok = (
+            report.get("login")
+            and report.get("all_selectors_healthy", True)
+            and not report.get("error")
+        )
+        print(
+            "\nHASIL KESELURUHAN  : "
+            + ("SEMUA SEHAT & SIAP SUBMIT" if all_ok else "PERLU TINDAKAN")
+        )
+        print("=" * 60)
+
+    if "LOGIN_DIPERLUKAN" in str(report.get("error", "")):
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+    return (
+        0
+        if report.get("login")
+        and "error" not in report
+        and report.get("all_selectors_healthy", True)
+        else EXIT_CODES[Status.GAGAL]
+    )
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     d = date.fromisoformat(args.date) if args.date else date.today()
     cfg_path = Path(args.config) if getattr(args, "config", None) else None
@@ -559,6 +634,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser(
+        "doctor",
+        parents=[common],
+        help="diagnostik kesehatan sistem & canary selector portal (doctor --portal)",
+    )
+    p.add_argument(
+        "--portal",
+        action="store_true",
+        default=True,
+        help="uji kesehatan canary selector portal",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser(
         "fill", parents=[common], help="DRY-RUN: isi kolom, tidak mencentang/mengirim"

@@ -103,6 +103,11 @@ def attendance_input(page: Page) -> Locator:
     return form(page).get_by_label("Kehadiran", exact=True)
 
 
+def attendance_combobox(page: Page) -> Locator:
+    """Combobox Kehadiran (input[role='combobox'] di dalam form)."""
+    return form(page).locator("input[role='combobox']")
+
+
 def text_field(page: Page, key: str) -> Locator:
     return form(page).get_by_label(FIELD_LABELS[key], exact=True)
 
@@ -118,3 +123,46 @@ def declaration_label(page: Page) -> Locator:
 
 def save_button(page: Page) -> Locator:
     return form(page).get_by_role("button", name=SAVE_BUTTON, exact=True)
+
+
+def check_selectors_health(page: Page, d: date) -> dict[str, dict[str, object]]:
+    """Pemeriksaan kesehatan canary untuk memastikan seluruh locator semantik portal ada dan unik."""
+    health: dict[str, dict[str, object]] = {}
+
+    checks: list[tuple[str, str, Locator]] = [
+        ("page_heading", "Judul Riwayat Kehadiran (h1)", history_heading(page)),
+        ("day_button", f"Tombol kalender hari {tanggal_id(d)}", day_button(page, d)),
+        ("form_panel", "Panel formulir laporan (form.daily-form)", form(page)),
+        ("form_heading", f"Judul panel formulir ({tanggal_id(d)})", form_heading(page, d)),
+        ("location_status", "Blok status izin lokasi", location_ok(page)),
+        ("attendance_field", "Kolom Kehadiran (role=combobox)", attendance_input(page)),
+        ("field_aktivitas", "Textarea Uraian aktivitas", text_field(page, "aktivitas")),
+        (
+            "field_pembelajaran",
+            "Textarea Pembelajaran yang diperoleh",
+            text_field(page, "pembelajaran"),
+        ),
+        ("field_kendala", "Textarea Kendala yang dialami", text_field(page, "kendala")),
+        ("declaration_checkbox", "Kotak centang konfirmasi peninjauan", declaration(page)),
+        ("save_button", "Tombol 'Simpan dan Kirim'", save_button(page)),
+    ]
+
+    for key, desc, loc in checks:
+        try:
+            count = loc.count()
+            health[key] = {
+                "description": desc,
+                "count": count,
+                "is_unique": count == 1,
+                "healthy": count == 1,
+            }
+        except Exception as exc:  # noqa: BLE001
+            health[key] = {
+                "description": desc,
+                "count": 0,
+                "is_unique": False,
+                "healthy": False,
+                "error": str(exc),
+            }
+
+    return health
