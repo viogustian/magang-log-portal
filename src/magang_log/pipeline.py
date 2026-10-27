@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from .drafter.models import LogEntryDraft
 from .drafter.stage import DraftingStage
 from .gates import GateDecision, PreflightGate, generate_run_id
 from .models import (
@@ -268,14 +269,27 @@ class ArtifactStore:
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
-    def save_draft(self, target_date: date, draft: DraftResult) -> Path:
+    def save_draft(self, target_date: date, draft: DraftResult | LogEntryDraft) -> Path:
         path = self._date_dir(target_date) / "draft.json"
+        if isinstance(draft, LogEntryDraft):
+            draft_json_str = draft.model_dump_json()
+            prompt_ver = getattr(draft, "prompt_version", "v1")
+            mod = getattr(draft, "model", "gemini-2.5-flash")
+            tok_in = 0
+            tok_out = 0
+        else:
+            draft_json_str = draft.draft_json
+            prompt_ver = draft.prompt_version
+            mod = draft.model
+            tok_in = draft.tokens_in
+            tok_out = draft.tokens_out
+
         data = {
-            "draft_json": draft.draft_json,
-            "prompt_version": draft.prompt_version,
-            "model": draft.model,
-            "tokens_in": draft.tokens_in,
-            "tokens_out": draft.tokens_out,
+            "draft_json": draft_json_str,
+            "prompt_version": prompt_ver,
+            "model": mod,
+            "tokens_in": tok_in,
+            "tokens_out": tok_out,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -331,6 +345,8 @@ class ArtifactStore:
             "kendala": entry.kendala,
             "approved_at": entry.approved_at.isoformat() if entry.approved_at else None,
             "kehadiran": entry.kehadiran,
+            "edit_ratio": entry.edit_ratio,
+            "content_hash": entry.content_hash,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -349,6 +365,8 @@ class ArtifactStore:
                 kendala=data["kendala"],
                 approved_at=datetime.fromisoformat(approved_at) if approved_at else None,
                 kehadiran=data.get("kehadiran", "Hadir"),
+                edit_ratio=float(data.get("edit_ratio", 0.0)),
+                content_hash=data.get("content_hash", ""),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None

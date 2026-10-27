@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
@@ -74,6 +75,21 @@ class ApprovedEntry:
     kendala: str
     approved_at: datetime | None = None  # None = belum disetujui => tidak boleh dikirim
     kehadiran: str = "Hadir"
+    edit_ratio: float = 0.0
+    content_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.content_hash:
+            combined = (
+                f"{self.aktivitas.strip()}\n{self.pembelajaran.strip()}\n{self.kendala.strip()}"
+            )
+            computed = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+            object.__setattr__(self, "content_hash", computed)
+
+    def assert_approved(self) -> None:
+        """Memastikan entri sudah disetujui manusia (approved_at tidak kosong)."""
+        if self.approved_at is None:
+            raise ValueError("entri belum disetujui manusia (approved_at kosong)")
 
     def problems(self, min_chars: int, max_chars: int) -> list[str]:
         """Pelanggaran aturan form portal (min/maks karakter, kehadiran)."""

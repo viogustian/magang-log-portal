@@ -40,6 +40,12 @@ class NotApproved(Exception):
     """Entri belum disetujui manusia (approved_at kosong)."""
 
 
+def assert_approved_for_submission(entry: ApprovedEntry) -> None:
+    """Memastikan draf sudah disetujui manusia sebelum dikirim ke portal."""
+    if entry.approved_at is None:
+        raise NotApproved("entri belum disetujui manusia (approved_at kosong)")
+
+
 @dataclass
 class PortalConfig:
     base_url: str = "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat"
@@ -210,8 +216,8 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         problems = entry.problems(self.cfg.min_chars, self.cfg.max_chars)
         if problems:
             raise ValueError("; ".join(problems))
-        if not dry_run and entry.approved_at is None:
-            raise NotApproved("entri belum disetujui manusia (approved_at kosong)")
+        if not dry_run:
+            assert_approved_for_submission(entry)
 
         d = entry.work_date
         day: DayInfo | None = None

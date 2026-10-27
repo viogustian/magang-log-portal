@@ -14,13 +14,15 @@ from playwright.sync_api import sync_playwright
 
 from .collectors.factory import collect_and_sanitize_evidence
 from .collectors.strength import build_drafting_payload, evaluate_evidence_strength
+from .drafter.models import LogEntryDraft
 from .exporter import export_logbook
 from .gates import GateDecision, PreflightGate
 from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status
 from .notify import send_system_notification
-from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
+from .pipeline import ArtifactStore, DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
+from .reviewer import ReviewSession
 from .settings import load_config
 from .store import LedgerStore
 
@@ -375,6 +377,75 @@ def cmd_preview_payload(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    artifacts_dir = Path(getattr(args, "artifacts_dir", None) or "data/runs")
+    artifact_store = ArtifactStore(artifacts_dir=artifacts_dir)
+
+    # 1. Cari draf dari SQLite store atau artifact_store
+    draft: LogEntryDraft | None = None
+    entry_rec = store.get_entry(d)
+    if entry_rec and entry_rec.draft_json:
+        try:
+            data = json.loads(entry_rec.draft_json)
+            if isinstance(data, dict):
+                if "work_date" not in data:
+                    data["work_date"] = d.isoformat()
+                draft = LogEntryDraft.model_validate(data)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            draft = None
+
+    if draft is None:
+        loaded = artifact_store.load_draft(d)
+        if loaded is not None:
+            if isinstance(loaded, LogEntryDraft):
+                draft = loaded
+            elif hasattr(loaded, "draft_json"):
+                try:
+                    data = json.loads(loaded.draft_json)
+                    if isinstance(data, dict):
+                        if "work_date" not in data:
+                            data["work_date"] = d.isoformat()
+                        draft = LogEntryDraft.model_validate(data)
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    draft = None
+
+    if draft is None:
+        print(f"Tidak ditemukan draf logbook untuk tanggal {d.isoformat()}.", file=sys.stderr)
+        print(
+            "Pastikan pipeline 'magang-log run' sudah dijalankan untuk menghasilkan draf.",
+            file=sys.stderr,
+        )
+        return EXIT_CODES[Status.PERLU_INPUT]
+
+    # 2. Ambil bukti pendukung dan catatan
+    evidence = store.get_evidence(d)
+    notes = store.get_notes(d)
+
+    # 3. Ambil laporan validasi jika ada di artifact_store
+    validation = artifact_store.load_validation(d)
+
+    # 4. Inisialisasi ReviewSession
+    session = ReviewSession(
+        store=store,
+        artifact_store=artifact_store,
+    )
+
+    approved = session.review(
+        target_date=d,
+        draft=draft,
+        validation=validation,
+        evidence=evidence,
+        notes=notes,
+    )
+
+    if approved is not None:
+        return EXIT_CODES[Status.SUDAH_TERKIRIM]
+    return EXIT_CODES[Status.PERLU_REVIEW]
+
+
 def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
@@ -498,6 +569,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_preview_payload)
+
+    p = sub.add_parser(
+        "review",
+        parents=[common],
+        help="tinjau draf logbook interaktif (approve [Y], edit di $EDITOR [E], regenerate [R], skip [S])",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_review)
 
     return parser
 
