@@ -208,7 +208,14 @@ def cmd_fill(args: argparse.Namespace) -> int:
     entry = _load_entry(Path(args.entry))
     with PlaywrightPortal(_config(args)) as portal:
         result = portal.fill(entry)
-    _print({"status": result.status, "note": result.note, "screenshots": result.screenshots})
+    _print(
+        {
+            "status": result.status,
+            "note": result.note,
+            "screenshots": result.screenshots,
+            "traces": result.traces,
+        }
+    )
     return EXIT_CODES[result.status]
 
 
@@ -242,7 +249,14 @@ def cmd_submit(args: argparse.Namespace) -> int:
     except NotApproved as exc:
         print(exc)
         return EXIT_CODES[Status.PERLU_TINDAKAN]
-    _print({"status": result.status, "note": result.note, "screenshots": result.screenshots})
+    _print(
+        {
+            "status": result.status,
+            "note": result.note,
+            "screenshots": result.screenshots,
+            "traces": result.traces,
+        }
+    )
     return EXIT_CODES[result.status]
 
 

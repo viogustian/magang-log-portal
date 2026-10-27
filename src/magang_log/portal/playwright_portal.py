@@ -110,6 +110,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             if cfg.allow_location:
                 # Hanya untuk origin portal. Koordinat TIDAK di-override.
                 self._ctx.grant_permissions(["geolocation"], origin=_origin(cfg.base_url))
+            self._ctx.tracing.start(screenshots=True, snapshots=True, sources=True)
             self.page = self._ctx.new_page()
         except Exception:
             self._pw.stop()
@@ -117,6 +118,11 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         return self
 
     def __exit__(self, *exc_info) -> None:
+        if hasattr(self, "_ctx") and self._ctx is not None:
+            try:
+                self._ctx.tracing.stop()
+            except PlaywrightError:
+                pass
         for name in ("_ctx", "_browser"):
             obj = getattr(self, name, None)
             if obj is not None:
@@ -134,9 +140,15 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         query.update({"date": d.isoformat(), "view": "detail"})
         return urlunsplit(parts._replace(query=urlencode(query)))
 
-    def open_history(self, d: date) -> None:
+    def open_history(self, d: date, wait_until: str = "domcontentloaded") -> None:
         """Buka halaman Riwayat. Muat dari server (juga dipakai sebagai 'muat ulang')."""
-        self.page.goto(self._url(d), wait_until="domcontentloaded")
+        try:
+            self.page.goto(self._url(d), wait_until=wait_until)
+        except PlaywrightTimeout:
+            if wait_until == "networkidle":
+                self.page.goto(self._url(d), wait_until="domcontentloaded")
+            else:
+                raise
         self.session_mgr.check_page(self.page)
         try:
             sel.history_heading(self.page).wait_for(state="visible", timeout=self.cfg.timeout_ms)
@@ -208,6 +220,15 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             return None  # screenshot hanya bantuan diagnosis; jangan menutupi galat asli
         return path
 
+    def _save_trace(self, d: date, name: str = "trace") -> Path | None:
+        try:
+            path = self.cfg.artifacts_dir / d.isoformat() / f"{name}.zip"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._ctx.tracing.stop(path=str(path))
+            return path
+        except (PlaywrightError, OSError):
+            return None
+
     # ── diagnosis tanpa mengubah apa pun ────────────────────────────────────
 
     def check(self, d: date) -> dict:
@@ -260,6 +281,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         d = entry.work_date
         day: DayInfo | None = None
         shots: list[Path] = []
+        traces: list[Path] = []
         try:
             self.open_history(d)
             day = self.read_day(d)
@@ -271,6 +293,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                     f"status hari: '{day.label}'; form tidak disentuh ({decision.reason})",
                     day,
                     shots,
+                    traces,
                 )
 
             self._open_form(d)
@@ -284,6 +307,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                     "untuk browser lalu coba lagi (uji dengan `magang-portal check`)",
                     day,
                     shots,
+                    traces,
                 )
 
             attendance = sel.attendance_input(self.page).input_value().strip()
@@ -302,23 +326,31 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                     "kolom terisi; pernyataan TIDAK dicentang dan tombol kirim TIDAK diklik",
                     day,
                     shots,
+                    traces,
                 )
 
-            self._tick_declaration()
+            self._tick_declaration(entry)
             save = sel.save_button(self.page)
             if not self._wait_until(save.is_enabled, 5_000):
                 raise PortalError("tombol 'Simpan dan Kirim' tetap nonaktif setelah form terisi")
             save.click()
-            return self._verify_after_submit(d, shots)
+            try:
+                # Menunggu dialog/form tertutup atau network request selesai setelah kirim
+                sel.form(self.page).wait_for(state="hidden", timeout=5_000)
+            except (PlaywrightError, PlaywrightTimeout):
+                pass
+            return self._verify_after_submit(d, shots, traces)
 
         except LoginRequired as exc:
             return PortalResult(
-                Status.LOGIN_DIPERLUKAN, f"sesi habis ({_first_line(exc)})", day, shots
+                Status.LOGIN_DIPERLUKAN, f"sesi habis ({_first_line(exc)})", day, shots, traces
             )
         except (PortalError, PlaywrightError) as exc:
             if (path := self._shot(d, "gagal")) is not None:
                 shots.append(path)
-            return PortalResult(Status.GAGAL, _first_line(exc), day, shots)
+            if (tpath := self._save_trace(d, "trace-gagal")) is not None:
+                traces.append(tpath)
+            return PortalResult(Status.GAGAL, _first_line(exc), day, shots, traces)
 
     def populate_form(self, entry: ApprovedEntry) -> dict[str, str]:
         """Isi seluruh kolom formulir dan baca-balik untuk memverifikasi keutuhan teks."""
@@ -345,7 +377,9 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         """Isi formulir dalam mode dry-run tanpa mencentang atau mengirim."""
         return self.submit(entry, dry_run=True)
 
-    def _tick_declaration(self) -> None:
+    def _tick_declaration(self, entry: ApprovedEntry) -> None:
+        """Centang pernyataan legalitas HANYA jika draf sudah disetujui manusia."""
+        assert_approved_for_submission(entry)
         checkbox = sel.declaration(self.page)
         try:
             checkbox.check(timeout=3_000)
@@ -355,26 +389,30 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         if not checkbox.is_checked():
             raise PortalError("pernyataan peninjauan tidak berhasil dicentang")
 
-    def _verify_after_submit(self, d: date, shots: list[Path]) -> PortalResult:
+    def _verify_after_submit(self, d: date, shots: list[Path], traces: list[Path]) -> PortalResult:
         """Verifikasi independen: muat ulang dari server, baca status hari dari kalender."""
         last: DayInfo | None = None
         for _ in range(5):
-            self.page.wait_for_timeout(1_500)
-            self.open_history(d)
+            self.page.wait_for_timeout(2_000)
+            self.open_history(d, wait_until="networkidle")
             last = self.read_day(d)
-            if last.status is DayStatus.SUDAH_TERKIRIM:
+            if last.status is DayStatus.SUDAH_TERKIRIM or sel.is_submitted_status_text(last.label):
                 return PortalResult(
                     Status.BERHASIL,
                     f"status hari setelah muat ulang: '{last.label}'. Catatan: isi teks belum "
                     "dibaca-balik (butuh snapshot halaman detail hari yang sudah terkirim)",
                     last,
                     shots,
+                    traces,
                 )
         if (path := self._shot(d, "verifikasi-gagal")) is not None:
             shots.append(path)
+        if (tpath := self._save_trace(d, "trace-verifikasi-gagal")) is not None:
+            traces.append(tpath)
         return PortalResult(
             Status.GAGAL,
             f"status hari tidak berubah setelah kirim (terakhir: '{last.label if last else '?'}')",
             last,
             shots,
+            traces,
         )

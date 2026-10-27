@@ -113,6 +113,7 @@ class PortalResult:
     note: str
     day: DayInfo | None = None
     screenshots: list[Path] = field(default_factory=list)
+    traces: list[Path] = field(default_factory=list)
 
 
 @dataclass

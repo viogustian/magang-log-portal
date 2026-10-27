@@ -66,6 +66,19 @@ STATUS_LABELS: dict[str, DayStatus] = {
 
 _NORMALIZED_STATUS_LABELS: dict[str, DayStatus] = {k.lower(): v for k, v in STATUS_LABELS.items()}
 
+# Status terkirim yang sah menurut spesifikasi dan sistem portal
+SUBMITTED_STATUS_LABELS: tuple[str, ...] = (
+    "Menunggu Persetujuan",
+    "Hadir disetujui",
+    "Menunggu Tindakan Mentor",
+    "Izin disetujui",
+)
+
+
+def is_submitted_status_text(text: str) -> bool:
+    """Periksa apakah teks atau label memuat salah satu status terkirim resmi."""
+    return any(s.lower() in text.lower() for s in SUBMITTED_STATUS_LABELS)
+
 
 def classify(label: str, disabled: bool) -> DayStatus:
     """Ubah aria-label tombol hari + status disabled menjadi DayStatus."""
