@@ -26,6 +26,7 @@ from playwright.sync_api import sync_playwright
 
 from ..models import ApprovedEntry, DayInfo, DayStatus, PortalResult, Status
 from . import selectors as sel
+from .anti_tamper import AntiTamperDecision, AntiTamperGate
 from .session import LoginRequired, SessionManager
 
 
@@ -64,7 +65,7 @@ _EARLY_EXIT: dict[DayStatus, Status] = {
     DayStatus.LIBUR: Status.LIBUR,
     DayStatus.TERKUNCI: Status.TERKUNCI,
     DayStatus.PERLU_TINDAKAN: Status.PERLU_TINDAKAN,
-    DayStatus.TIDAK_DIKENAL: Status.PERLU_TINDAKAN,
+    DayStatus.TIDAK_DIKENAL: Status.TIDAK_DIKENAL,
 }
 
 
@@ -154,10 +155,14 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         count = button.count()
         if count != 1:
             raise PortalError(f"tombol tanggal {d} ditemukan {count}x, seharusnya 1x")
-        label = button.get_attribute("aria-label") or ""
-        disabled = button.is_disabled()
-        is_today = button.get_attribute("aria-current") == "date"
-        return DayInfo(d, sel.classify(label, disabled), label, disabled, is_today)
+        return sel.extract_day_info(button, d)
+
+    def inspect_day(self, d: date) -> tuple[DayInfo, AntiTamperDecision]:
+        """Pemeriksaan kalender dan evaluasi anti-tamper untuk tanggal d tanpa menyentuh form."""
+        self.open_history(d)
+        day = self.read_day(d)
+        decision = AntiTamperGate.inspect(day)
+        return day, decision
 
     def _open_form(self, d: date) -> None:
         heading = sel.form_heading(self.page, d)
@@ -201,10 +206,17 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             self.open_history(d)
             report["login"] = True
             day = self.read_day(d)
+            decision = AntiTamperGate.inspect(day)
             report.update(
-                status=day.status.value, label=day.label, disabled=day.disabled, today=day.is_today
+                status=day.status.value,
+                label=day.label,
+                disabled=day.disabled,
+                today=day.is_today,
+                submittable=decision.submittable,
+                anti_tamper_decision=decision.status.value,
+                anti_tamper_reason=decision.reason,
             )
-            if day.status is DayStatus.BELUM_DIISI:
+            if decision.submittable:
                 self._open_form(d)
                 report["location"] = self._location_ok()
                 report["attendance_value"] = sel.attendance_input(self.page).input_value()
@@ -241,10 +253,13 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             self.open_history(d)
             day = self.read_day(d)
 
-            early = _EARLY_EXIT.get(day.status)
-            if early is not None:
+            decision = AntiTamperGate.inspect(day)
+            if not decision.submittable:
                 return PortalResult(
-                    early, f"status hari: '{day.label}'; form tidak disentuh", day, shots
+                    decision.status,
+                    f"status hari: '{day.label}'; form tidak disentuh ({decision.reason})",
+                    day,
+                    shots,
                 )
 
             self._open_form(d)

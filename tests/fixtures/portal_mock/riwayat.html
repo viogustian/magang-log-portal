@@ -123,6 +123,15 @@
   });
 
   var today = document.querySelector("button.calendar-day-button[aria-current=date]");
+  var overrideStatus = q.get("override_status");
+  var disableToday = q.get("disable_today") === "1";
+  if (today && overrideStatus) {
+    setStatus(today, overrideStatus);
+    if (disableToday) {
+      today.disabled = true;
+      today.classList.add("unclickable-day");
+    }
+  }
   if (q.get("preopen") !== "0" && today) { openFor(today); } else { panel.hidden = true; }
 })();
 

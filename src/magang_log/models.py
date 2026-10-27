@@ -37,6 +37,7 @@ class Status(StrEnum):
     PERLU_INPUT = "PERLU_INPUT"  # bukti tidak mencukupi, butuh catatan manual
     PERLU_REVIEW = "PERLU_REVIEW"  # validasi butuh tinjauan manusia atau tertunda
     VALIDATION_FAILED = "VALIDATION_FAILED"  # validasi draf gagal
+    TIDAK_DIKENAL = "TIDAK_DIKENAL"  # label status kalender tidak dikenal: fail-closed
 
 
 # Kode keluar CLI (lihat PRD bagian 11.3)
@@ -53,6 +54,7 @@ EXIT_CODES: dict[Status, int] = {
     Status.GAGAL: 40,
     Status.TERKUNCI: 40,
     Status.LOKASI_TIDAK_TERSEDIA: 40,
+    Status.TIDAK_DIKENAL: 40,
 }
 
 

@@ -19,11 +19,15 @@ from datetime import date
 
 from playwright.sync_api import Locator, Page
 
-from ..models import DayStatus
+from ..models import DayInfo, DayStatus
 
 BULAN = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
     "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+]  # fmt: skip
+
+HARI = [
+    "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu",
 ]  # fmt: skip
 
 # Teks pernyataan di form. Dicentang HANYA setelah pengguna menyetujui isi (lihat ApprovedEntry).
@@ -53,19 +57,40 @@ STATUS_LABELS: dict[str, DayStatus] = {
     "Tidak Hadir": DayStatus.PERLU_TINDAKAN,  # legenda
 }
 
+_NORMALIZED_STATUS_LABELS: dict[str, DayStatus] = {k.lower(): v for k, v in STATUS_LABELS.items()}
+
 
 def classify(label: str, disabled: bool) -> DayStatus:
     """Ubah aria-label tombol hari + status disabled menjadi DayStatus."""
+    if not label or not label.strip():
+        return DayStatus.TIDAK_DIKENAL
     status_text = label.rsplit(",", 1)[-1].strip()
-    status = STATUS_LABELS.get(status_text, DayStatus.TIDAK_DIKENAL)
+    status = STATUS_LABELS.get(status_text)
+    if status is None:
+        status = _NORMALIZED_STATUS_LABELS.get(status_text.lower(), DayStatus.TIDAK_DIKENAL)
     if status is DayStatus.BELUM_DIISI and disabled:
         return DayStatus.TERKUNCI
     return status
 
 
+def nama_hari_id(d: date) -> str:
+    """Nama hari dalam bahasa Indonesia (0=Senin, ..., 6=Minggu)."""
+    return HARI[d.weekday()]
+
+
 def tanggal_id(d: date) -> str:
     """'27 Oktober 2026' (tanpa nol di depan hari)."""
     return f"{d.day} {BULAN[d.month - 1]} {d.year}"
+
+
+def tanggal_lengkap_id(d: date) -> str:
+    """'Selasa, 27 Oktober 2026'."""
+    return f"{nama_hari_id(d)}, {tanggal_id(d)}"
+
+
+def format_day_label_prefix(d: date) -> str:
+    """Format awalan label hari aksesibel, mis. 'Selasa, 27 Oktober 2026'."""
+    return tanggal_lengkap_id(d)
 
 
 # ── Halaman riwayat ──────────────────────────────────────────────────────────
@@ -76,9 +101,19 @@ def history_heading(page: Page) -> Locator:
 
 
 def day_button(page: Page, d: date) -> Locator:
-    """Tombol hari. Pola ', 2 November 2026,' tidak cocok dengan ', 12 November 2026,'."""
-    pattern = re.compile(rf",\s*{re.escape(tanggal_id(d))}\s*,")
+    """Tombol hari menggunakan format nama hari yang dapat diakses (mis. 'Selasa, 27 Oktober 2026, ...')."""
+    pattern = re.compile(
+        rf"(?:{re.escape(nama_hari_id(d))},\s*|,\s*){re.escape(tanggal_id(d))}\s*,"
+    )
     return page.get_by_role("button", name=pattern)
+
+
+def extract_day_info(button: Locator, d: date) -> DayInfo:
+    """Ekstrak atribut aksesibilitas tombol hari menjadi instance DayInfo."""
+    label = button.get_attribute("aria-label") or ""
+    disabled = button.is_disabled()
+    is_today = button.get_attribute("aria-current") == "date"
+    return DayInfo(d, classify(label, disabled), label, disabled, is_today)
 
 
 # ── Panel form "Tambah laporan" ──────────────────────────────────────────────
