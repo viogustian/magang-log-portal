@@ -207,7 +207,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
 def cmd_fill(args: argparse.Namespace) -> int:
     entry = _load_entry(Path(args.entry))
     with PlaywrightPortal(_config(args)) as portal:
-        result = portal.submit(entry, dry_run=True)
+        result = portal.fill(entry)
     _print({"status": result.status, "note": result.note, "screenshots": result.screenshots})
     return EXIT_CODES[result.status]
 
@@ -227,7 +227,8 @@ def _confirm_interactively(entry: ApprovedEntry) -> ApprovedEntry | None:
 
 def cmd_submit(args: argparse.Namespace) -> int:
     entry = _load_entry(Path(args.entry))
-    if entry.approved_at is None:
+    dry_run = getattr(args, "dry_run", False)
+    if not dry_run and entry.approved_at is None:
         if not sys.stdin.isatty():
             print("Entri belum disetujui (approved_at kosong) dan tidak ada terminal interaktif.")
             return EXIT_CODES[Status.PERLU_TINDAKAN]
@@ -237,7 +238,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         entry = confirmed
     try:
         with PlaywrightPortal(_config(args)) as portal:
-            result = portal.submit(entry)
+            result = portal.submit(entry, dry_run=dry_run)
     except NotApproved as exc:
         print(exc)
         return EXIT_CODES[Status.PERLU_TINDAKAN]
@@ -654,6 +655,12 @@ def build_parser() -> argparse.ArgumentParser:
         "fill", parents=[common], help="DRY-RUN: isi kolom, tidak mencentang/mengirim"
     )
     p.add_argument("--entry", required=True, help="file JSON entri")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="flag eksplisit dry-run (selalu aktif pada fill)",
+    )
     p.set_defaults(func=cmd_fill)
 
     p = sub.add_parser(
@@ -662,6 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="isi, centang pernyataan setelah Anda setuju, kirim, verifikasi",
     )
     p.add_argument("--entry", required=True, help="file JSON entri")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="DRY-RUN: isi kolom dan verifikasi tanpa mencentang atau mengirim",
+    )
     p.set_defaults(func=cmd_submit)
 
     p = sub.add_parser(

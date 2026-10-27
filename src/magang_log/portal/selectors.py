@@ -33,6 +33,13 @@ HARI = [
 # Teks pernyataan di form. Dicentang HANYA setelah pengguna menyetujui isi (lihat ApprovedEntry).
 DECLARATION = "Saya menyatakan telah meninjau dan memastikan isian laporan ini sudah benar"
 LOCATION_OK_TEXT = "Lokasi berhasil diakses"
+LOCATION_ERROR_TEXTS = (
+    "Lokasi tidak dapat diakses",
+    "tidak dapat diakses",
+    "Gagal mengakses lokasi",
+    "Izinkan akses lokasi",
+    "Koordinat tidak ditemukan",
+)
 SAVE_BUTTON = "Simpan dan Kirim"
 
 FIELD_LABELS = {
@@ -129,8 +136,21 @@ def form_heading(page: Page, d: date) -> Locator:
     return page.get_by_role("heading", name=pattern)
 
 
+def location_block(page: Page) -> Locator:
+    """Blok indikator status izin lokasi pada form."""
+    return form(page).locator(".location-permission")
+
+
 def location_ok(page: Page) -> Locator:
-    return form(page).locator(".location-permission").get_by_text(LOCATION_OK_TEXT)
+    return location_block(page).get_by_text(LOCATION_OK_TEXT)
+
+
+def location_error(page: Page) -> Locator:
+    """Locator indikasi galat lokasi pada blok perizinan."""
+    pattern = re.compile(
+        r"tidak dapat diakses|gagal|ditolak|tidak ditemukan|izinkan akses", re.IGNORECASE
+    )
+    return location_block(page).filter(has_text=pattern)
 
 
 def attendance_input(page: Page) -> Locator:

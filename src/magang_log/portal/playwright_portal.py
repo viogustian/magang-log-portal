@@ -13,6 +13,7 @@ Prinsip (lihat PRD, bagian 8.7 dan 14):
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -171,13 +172,23 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
         heading.wait_for(state="visible", timeout=self.cfg.timeout_ms)
 
     def _location_ok(self) -> bool:
+        """Periksa apakah lokasi berhasil diakses portal tanpa mock koordinat buatan."""
         try:
-            sel.location_ok(self.page).wait_for(
-                state="visible", timeout=self.cfg.location_timeout_ms
-            )
-        except PlaywrightTimeout:
+            start_time = time.monotonic()
+            timeout_sec = self.cfg.location_timeout_ms / 1000.0
+            ok_loc = sel.location_ok(self.page)
+            err_loc = sel.location_error(self.page)
+
+            while time.monotonic() - start_time < timeout_sec:
+                if ok_loc.is_visible():
+                    return True
+                if err_loc.is_visible():
+                    return False
+                self.page.wait_for_timeout(200)
+
+            return ok_loc.is_visible()
+        except PlaywrightError:
             return False
-        return True
 
     def _wait_until(self, predicate: Callable[[], bool], timeout_ms: int) -> bool:
         waited = 0
@@ -281,12 +292,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                     f"kolom Kehadiran bernilai {attendance!r}, bukan {entry.kehadiran!r}"
                 )
 
-            for key in sel.FIELD_LABELS:
-                text = getattr(entry, key).strip()
-                field = sel.text_field(self.page, key)
-                field.fill(text)
-                if field.input_value() != text:
-                    raise PortalError(f"isi '{key}' tidak tersimpan utuh di form")
+            self.populate_form(entry)
 
             if dry_run:
                 if (path := self._shot(d, "dryrun")) is not None:
@@ -313,6 +319,31 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             if (path := self._shot(d, "gagal")) is not None:
                 shots.append(path)
             return PortalResult(Status.GAGAL, _first_line(exc), day, shots)
+
+    def populate_form(self, entry: ApprovedEntry) -> dict[str, str]:
+        """Isi seluruh kolom formulir dan baca-balik untuk memverifikasi keutuhan teks."""
+        read_back: dict[str, str] = {}
+        for key in sel.FIELD_LABELS:
+            text = getattr(entry, key).strip()
+            field = sel.text_field(self.page, key)
+            field.fill(text)
+            val = field.input_value()
+            read_back[key] = val
+            if val != text:
+                if len(val) < len(text):
+                    raise PortalError(
+                        f"kolom '{key}' mengalami pemotongan (truncation): "
+                        f"diharapkan {len(text)} karakter, terbaca {len(val)} karakter"
+                    )
+                raise PortalError(
+                    f"isi kolom '{key}' tidak tersimpan utuh di form "
+                    f"(mismatch / encoding loss / corruption)"
+                )
+        return read_back
+
+    def fill(self, entry: ApprovedEntry) -> PortalResult:
+        """Isi formulir dalam mode dry-run tanpa mencentang atau mengirim."""
+        return self.submit(entry, dry_run=True)
 
     def _tick_declaration(self) -> None:
         checkbox = sel.declaration(self.page)
