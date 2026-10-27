@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .models import EXIT_CODES, Status
+from .models import EXIT_CODES, RunRecord, Status
 from .settings import AppConfig, normalize_workdays
+from .store import LedgerStore
 
 INDONESIAN_DAY_NAMES = [
     "Senin",
@@ -25,33 +27,48 @@ INDONESIAN_DAY_NAMES = [
 
 
 class GateDecision(StrEnum):
-    """Keputusan pre-flight gate kalender."""
+    """Keputusan pre-flight gate kalender & ledger."""
 
     WORKDAY = "WORKDAY"
     LIBUR = "LIBUR"
+    SUDAH_TERKIRIM = "SUDAH_TERKIRIM"
 
     @property
     def is_workday(self) -> bool:
+        return self in (GateDecision.WORKDAY, GateDecision.SUDAH_TERKIRIM)
+
+    @property
+    def can_proceed(self) -> bool:
         return self == GateDecision.WORKDAY
 
 
 @dataclass(frozen=True)
 class GateResult:
-    """Hasil evaluasi mendalam oleh CalendarGate."""
+    """Hasil evaluasi mendalam oleh CalendarGate dan PreflightGate."""
 
     decision: GateDecision
     reason: str
     target_date: date
+    run_id: str | None = None
 
     @property
     def is_workday(self) -> bool:
-        return self.decision == GateDecision.WORKDAY
+        return self.decision in (GateDecision.WORKDAY, GateDecision.SUDAH_TERKIRIM)
 
     @property
     def exit_code(self) -> int:
         if self.decision == GateDecision.LIBUR:
             return EXIT_CODES[Status.LIBUR]
+        if self.decision == GateDecision.SUDAH_TERKIRIM:
+            return EXIT_CODES[Status.SUDAH_TERKIRIM]
         return 0
+
+
+def generate_run_id(target_date: date) -> str:
+    """Menghasilkan run_id unik untuk setiap eksekusi pipeline."""
+    unique_suffix = uuid.uuid4().hex[:8]
+    now_str = datetime.now().strftime("%H%M%S")
+    return f"run-{target_date.strftime('%Y%m%d')}-{now_str}-{unique_suffix}"
 
 
 class HolidayProvider:
@@ -191,4 +208,139 @@ class CalendarGate:
             decision=GateDecision.WORKDAY,
             reason=f"Hari kerja aktif ({day_name})",
             target_date=target_date,
+        )
+
+
+class PreflightGate:
+    """Pre-flight execution gate yang mengintegrasikan CalendarGate dan LedgerStore untuk menjamin idempotensi."""
+
+    def __init__(self, calendar_gate: CalendarGate, store: LedgerStore) -> None:
+        self.calendar_gate = calendar_gate
+        self.store = store
+
+    @classmethod
+    def from_config_and_store(cls, cfg: AppConfig, store: LedgerStore) -> PreflightGate:
+        calendar_gate = CalendarGate.from_config(cfg)
+        return cls(calendar_gate=calendar_gate, store=store)
+
+    def evaluate(
+        self,
+        target_date: date,
+        content_hash: str | None = None,
+        force: bool = False,
+    ) -> GateDecision:
+        return self.inspect(target_date, content_hash=content_hash, force=force).decision
+
+    def inspect(
+        self,
+        target_date: date,
+        content_hash: str | None = None,
+        force: bool = False,
+    ) -> GateResult:
+        run_id = generate_run_id(target_date)
+        start_time = datetime.now()
+
+        # 1. Cek kalender & hari libur
+        cal_res = self.calendar_gate.inspect(target_date)
+        if cal_res.decision == GateDecision.LIBUR:
+            finished = datetime.now()
+            duration_ms = int((finished - start_time).total_seconds() * 1000)
+            self.store.record_run(
+                RunRecord(
+                    run_id=run_id,
+                    work_date=target_date,
+                    stage="GATED",
+                    status=Status.LIBUR,
+                    started_at=start_time,
+                    finished_at=finished,
+                    duration_ms=duration_ms,
+                )
+            )
+            return GateResult(
+                decision=GateDecision.LIBUR,
+                reason=cal_res.reason,
+                target_date=target_date,
+                run_id=run_id,
+            )
+
+        # 2. Cek ledger entri yang sudah ada untuk menjamin idempotensi
+        entry = self.store.get_entry(target_date)
+        if entry is not None:
+            is_finalized = entry.portal_status in (
+                Status.SUDAH_TERKIRIM,
+                Status.BERHASIL,
+                "SUDAH_TERKIRIM",
+                "BERHASIL",
+            )
+            if is_finalized:
+                # Guardrail: --force TIDAK BOLEH menembus entri yang sudah terkirim ke portal
+                finished = datetime.now()
+                duration_ms = int((finished - start_time).total_seconds() * 1000)
+                reason = (
+                    f"Tanggal {target_date} sudah berstatus {entry.portal_status} di ledger; "
+                    "pengiriman ulang dicegah"
+                )
+                self.store.record_run(
+                    RunRecord(
+                        run_id=run_id,
+                        work_date=target_date,
+                        stage="GATED",
+                        status=Status.SUDAH_TERKIRIM,
+                        started_at=start_time,
+                        finished_at=finished,
+                        duration_ms=duration_ms,
+                    )
+                )
+                return GateResult(
+                    decision=GateDecision.SUDAH_TERKIRIM,
+                    reason=reason,
+                    target_date=target_date,
+                    run_id=run_id,
+                )
+
+            # Jika belum finalized, cek apakah content_hash sama dan tidak dipaksa (--force)
+            if content_hash is not None and entry.content_hash == content_hash and not force:
+                finished = datetime.now()
+                duration_ms = int((finished - start_time).total_seconds() * 1000)
+                reason = (
+                    f"Tanggal {target_date} memiliki draf dengan content_hash identik ({content_hash}); "
+                    "gunakan --force jika ingin membuat ulang"
+                )
+                self.store.record_run(
+                    RunRecord(
+                        run_id=run_id,
+                        work_date=target_date,
+                        stage="GATED",
+                        status=Status.BERHASIL,
+                        started_at=start_time,
+                        finished_at=finished,
+                        duration_ms=duration_ms,
+                    )
+                )
+                return GateResult(
+                    decision=GateDecision.WORKDAY,
+                    reason=reason,
+                    target_date=target_date,
+                    run_id=run_id,
+                )
+
+        # 3. Lolos gate pre-flight - catat initial run state
+        finished = datetime.now()
+        duration_ms = int((finished - start_time).total_seconds() * 1000)
+        self.store.record_run(
+            RunRecord(
+                run_id=run_id,
+                work_date=target_date,
+                stage="GATED",
+                status=Status.BERHASIL,
+                started_at=start_time,
+                finished_at=finished,
+                duration_ms=duration_ms,
+            )
+        )
+        return GateResult(
+            decision=GateDecision.WORKDAY,
+            reason=f"Layak diproses: {cal_res.reason}",
+            target_date=target_date,
+            run_id=run_id,
         )

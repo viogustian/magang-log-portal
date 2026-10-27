@@ -65,3 +65,40 @@ personal_holidays:
     payload = json.loads(captured.out)
     assert payload["decision"] == "LIBUR"
     assert "Cuti Pribadi Khusus" in payload["reason"]
+
+
+def test_cli_gate_with_already_submitted_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from datetime import date
+
+    from magang_log.models import EntryRecord, Status
+    from magang_log.store import LedgerStore
+
+    db_path = tmp_path / "custom_state.db"
+    store = LedgerStore(db_path=db_path)
+    store.save_entry(
+        EntryRecord(
+            work_date=date(2026, 10, 27),
+            draft_json='{"aktivitas": "Submit tested"}',
+            approved_json='{"aktivitas": "Submit tested"}',
+            portal_status=Status.SUDAH_TERKIRIM,
+        )
+    )
+
+    # Menjalankan gate biasa pada tanggal yang sudah submit
+    exit_code = main(["gate", "--date", "2026-10-27", "--db", str(db_path)])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["decision"] == "SUDAH_TERKIRIM"
+    assert payload["status"] == "SUDAH_TERKIRIM"
+    assert payload["run_id"] is not None
+
+    # Menjalankan gate dengan --force: guardrail tidak boleh menembus SUDAH_TERKIRIM
+    exit_code_force = main(["gate", "--date", "2026-10-27", "--db", str(db_path), "--force"])
+    assert exit_code_force == 0
+    captured_force = capsys.readouterr()
+    payload_force = json.loads(captured_force.out)
+    assert payload_force["decision"] == "SUDAH_TERKIRIM"
+    assert payload_force["status"] == "SUDAH_TERKIRIM"

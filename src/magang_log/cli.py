@@ -12,11 +12,12 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .gates import CalendarGate, GateDecision
+from .gates import GateDecision, PreflightGate
 from .models import EXIT_CODES, ApprovedEntry, Status
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
 from .settings import load_config
+from .store import LedgerStore
 
 CONFIRM_WORD = "SETUJU"
 
@@ -95,15 +96,28 @@ def cmd_gate(args: argparse.Namespace) -> int:
     d = date.fromisoformat(args.date) if args.date else date.today()
     cfg_path = Path(args.config) if getattr(args, "config", None) else None
     cfg = load_config(cfg_path)
-    gate = CalendarGate.from_config(cfg)
-    result = gate.inspect(d)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    gate = PreflightGate.from_config_and_store(cfg, store)
+    result = gate.inspect(
+        d,
+        content_hash=getattr(args, "content_hash", None),
+        force=bool(getattr(args, "force", False)),
+    )
 
-    status_label = Status.LIBUR if result.decision == GateDecision.LIBUR else Status.BERHASIL
+    if result.decision == GateDecision.LIBUR:
+        status_label = Status.LIBUR
+    elif result.decision == GateDecision.SUDAH_TERKIRIM:
+        status_label = Status.SUDAH_TERKIRIM
+    else:
+        status_label = Status.BERHASIL
+
     payload = {
         "status": status_label,
         "decision": result.decision,
         "reason": result.reason,
         "date": d.isoformat(),
+        "run_id": result.run_id,
     }
     _print(payload)
     return result.exit_code
@@ -173,9 +187,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "gate",
         parents=[common],
-        help="pre-flight gate kalender: hari kerja, libur nasional, cuti pribadi",
+        help="pre-flight gate kalender & ledger: hari kerja, libur, dan status terkirim",
     )
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="buat ulang draf (tidak melewati SUDAH_TERKIRIM)",
+    )
+    p.add_argument("--content-hash", help="hash konten yang dievaluasi")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_gate)
 
     p = sub.add_parser(
