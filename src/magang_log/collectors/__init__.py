@@ -13,6 +13,7 @@ from .base import (
     compute_evidence_id,
     run_collectors,
 )
+from .git import GitCollector
 from .notes import NotesCollector
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "Evidence",
     "EvidenceSource",
     "EvidenceStrength",
+    "GitCollector",
     "NotesCollector",
     "SourceConfig",
     "compute_evidence_id",

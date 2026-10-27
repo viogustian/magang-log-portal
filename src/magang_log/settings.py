@@ -98,10 +98,16 @@ class LLMSettings(StrictBaseModel):
 class GitSourceSettings(StrictBaseModel):
     enabled: bool = True
     repos: list[str] = Field(default_factory=list)
+    repositories: list[str] = Field(default_factory=list)
+    author_email: str | None = None
     include_diff: bool = False
     send_to_llm: list[str] = Field(
         default_factory=lambda: ["commit_message", "file_paths_relative"]
     )
+
+    def get_repositories(self) -> list[str]:
+        """Mengambil daftar repositori yang dikonfigurasi (repositories atau repos)."""
+        return self.repositories if self.repositories else self.repos
 
 
 class NotesSourceSettings(StrictBaseModel):
@@ -209,5 +215,9 @@ def load_config(
     config.portal.artifacts_dir = resolve_path(config.portal.artifacts_dir, root)
     config.holidays_file = resolve_path(config.holidays_file, root)
     config.sources.git.repos = [str(resolve_path(r, root)) for r in config.sources.git.repos]
+    if config.sources.git.repositories:
+        config.sources.git.repositories = [
+            str(resolve_path(r, root)) for r in config.sources.git.repositories
+        ]
 
     return config
