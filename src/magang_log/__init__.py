@@ -1,3 +1,4 @@
+from .cli import CliResult, CliRunner
 from .doctor import (
     CheckResult,
     CheckStatus,
@@ -38,6 +39,8 @@ __version__ = "0.1.0"
 __all__ = [
     "CheckResult",
     "CheckStatus",
+    "CliResult",
+    "CliRunner",
     "Doctor",
     "DoctorReport",
     "EXIT_CODES",
@@ -67,3 +70,4 @@ __all__ = [
     "log_run_event",
     "send_system_notification",
 ]
+

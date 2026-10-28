@@ -73,6 +73,7 @@ share/python-wheels/
 MANIFEST
 pip-wheel-metadata/
 pip-delete-this-directory.txt
+*.zip
 
 # ------------------------------------------------------------------------------
 # 3. Code Quality, Testing & Type Checking

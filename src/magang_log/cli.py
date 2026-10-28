@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import statistics
 import sys
-from dataclasses import replace
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from .collectors.factory import collect_and_sanitize_evidence
 from .collectors.strength import build_drafting_payload, evaluate_evidence_strength
 from .drafter.models import LogEntryDraft
 from .exporter import export_logbook
-from .gates import GateDecision, PreflightGate
+from .gates import INDONESIAN_DAY_NAMES, GateDecision, PreflightGate
 from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status, get_exit_code
 from .notify import send_system_notification
 from .pipeline import ArtifactStore, DraftResult, PipelineCoordinator, ValidationResult
@@ -24,6 +27,29 @@ from .settings import load_config
 from .store import LedgerStore
 
 CONFIRM_WORD = "SETUJU"
+
+
+def calculate_percentile(values: list[float], percentile: float) -> float:
+    """Menghitung persentil dari daftar nilai numerik dengan interpolasi linier."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    k = (len(sorted_values) - 1) * (percentile / 100.0)
+    f = int(k)
+    c = f + 1
+    if c < len(sorted_values):
+        d0 = sorted_values[f] * (c - k)
+        d1 = sorted_values[c] * (k - f)
+        return round(float(d0 + d1), 2)
+    return round(float(sorted_values[-1]), 2)
+
+
+def calculate_median(values: list[float]) -> float:
+    """Menghitung nilai tengah (median) dari daftar nilai numerik."""
+    if not values:
+        return 0.0
+    return round(float(statistics.median(values)), 2)
+
 
 
 def _config(args: argparse.Namespace) -> PortalConfig:
@@ -249,8 +275,40 @@ def _confirm_interactively(entry: ApprovedEntry) -> ApprovedEntry | None:
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
-    entry = _load_entry(Path(args.entry))
     dry_run = getattr(args, "dry_run", False)
+    entry_path = getattr(args, "entry", None)
+
+    if entry_path:
+        entry = _load_entry(Path(entry_path))
+    else:
+        d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+        db_path = getattr(args, "db", None) or "data/state.db"
+        store = LedgerStore(db_path=db_path)
+        entry_rec = store.get_entry(d)
+        if not entry_rec or not entry_rec.approved_json:
+            print(
+                f"Tidak ditemukan entri yang disetujui untuk tanggal {d.isoformat()}.",
+                file=sys.stderr,
+            )
+            print(
+                "Pastikan draf sudah disetujui lewat 'magang-log review' sebelum submit.",
+                file=sys.stderr,
+            )
+            return EXIT_CODES[Status.PERLU_TINDAKAN]
+        try:
+            data = json.loads(entry_rec.approved_json)
+            entry = ApprovedEntry(
+                work_date=d,
+                aktivitas=data.get("aktivitas", ""),
+                pembelajaran=data.get("pembelajaran", ""),
+                kendala=data.get("kendala", ""),
+                approved_at=entry_rec.approved_at or datetime.now(),
+                kehadiran=data.get("kehadiran", "Hadir"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Gagal memuat entri yang disetujui dari ledger: {exc}", file=sys.stderr)
+            return EXIT_CODES[Status.PERLU_TINDAKAN]
+
     if not dry_run and entry.approved_at is None:
         if not sys.stdin.isatty():
             print("Entri belum disetujui (approved_at kosong) dan tidak ada terminal interaktif.")
@@ -274,6 +332,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
         }
     )
     return EXIT_CODES[result.status]
+
 
 
 class CliApprovalStage:
@@ -369,10 +428,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         notifier=notifier,
     )
 
+    resume_flag = bool(getattr(args, "resume", False)) or (
+        getattr(args, "mode", None) == "resume"
+    )
+
     result = coordinator.run(
         target_date=d,
         dry_run=dry_run,
-        resume=bool(getattr(args, "resume", False)),
+        resume=resume_flag,
         force=bool(getattr(args, "force", False)),
     )
 
@@ -389,7 +452,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         "error_code": result.error_code,
     }
     _print(payload)
+
+    if getattr(args, "mode", None) == "review" and result.status == Status.PERLU_REVIEW:
+        review_args = argparse.Namespace(**vars(args))
+        return cmd_review(review_args)
+
     return result.exit_code
+
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -573,9 +642,313 @@ def cmd_review(args: argparse.Namespace) -> int:
     return EXIT_CODES[Status.PERLU_REVIEW]
 
 
-def build_parser() -> argparse.ArgumentParser:
+def cmd_status(args: argparse.Namespace) -> int:
+    """Audit kalender dan status entri logbook beberapa hari terakhir (grid/tabel visual)."""
+    d_end = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    days_count = max(1, getattr(args, "days", 14))
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
 
-    parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    gate = PreflightGate.from_config_and_store(cfg, store)
+
+    dates = [d_end - timedelta(days=i) for i in reversed(range(days_count))]
+    items: list[dict[str, Any]] = []
+
+    badge_counts: dict[str, int] = {
+        "[TERKIRIM]": 0,
+        "[REVIEW]": 0,
+        "[INPUT]": 0,
+        "[LIBUR]": 0,
+        "[GAGAL]": 0,
+        "[BELUM_DIISI]": 0,
+    }
+
+    for d in dates:
+        day_name = INDONESIAN_DAY_NAMES[d.weekday()]
+        entry = store.get_entry(d)
+        runs = store.get_runs_for_date(d)
+
+        badge: str
+        keterangan: str
+
+        if entry and (
+            entry.verified_at
+            or entry.submitted_at
+            or (
+                entry.portal_status
+                and entry.portal_status in ("SUDAH_TERKIRIM", "BERHASIL", "TERKIRIM")
+            )
+        ):
+            badge = "[TERKIRIM]"
+            keterangan = "Terkirim ke portal"
+        elif entry and (entry.approved_at or entry.approved_json):
+            badge = "[REVIEW]"
+            keterangan = "Disetujui, siap submit"
+        elif entry and entry.draft_json:
+            badge = "[REVIEW]"
+            keterangan = "Draf tersedia, perlu review"
+        elif runs:
+            latest = runs[-1]
+            if latest.status in (Status.SUDAH_TERKIRIM, Status.BERHASIL):
+                badge = "[TERKIRIM]"
+                keterangan = "Terkirim / Berhasil"
+            elif latest.status == Status.PERLU_REVIEW:
+                badge = "[REVIEW]"
+                keterangan = "Menunggu review manusia"
+            elif latest.status == Status.PERLU_INPUT:
+                badge = "[INPUT]"
+                keterangan = "Bukti kurang, perlu input catatan"
+            elif latest.status == Status.LIBUR:
+                badge = "[LIBUR]"
+                keterangan = "Hari libur / non-kerja"
+            elif latest.status in (Status.GAGAL, Status.TERKUNCI, Status.CRASH):
+                badge = "[GAGAL]"
+                keterangan = f"Gagal ({latest.error_code or latest.status})"
+            else:
+                badge = f"[{latest.status}]"
+                keterangan = str(latest.status)
+        else:
+            gate_res = gate.calendar_gate.inspect(d)
+            if gate_res.decision == GateDecision.LIBUR:
+                badge = "[LIBUR]"
+                keterangan = gate_res.reason or "Hari libur / non-kerja"
+            elif d.weekday() >= 5:
+                badge = "[LIBUR]"
+                keterangan = "Akhir pekan"
+            else:
+                badge = "[BELUM_DIISI]"
+                keterangan = "Belum ada entri logbook"
+
+        if badge in badge_counts:
+            badge_counts[badge] += 1
+        elif badge.startswith("["):
+            badge_counts[badge] = badge_counts.get(badge, 0) + 1
+
+        items.append(
+            {
+                "date": d.isoformat(),
+                "day": day_name,
+                "badge": badge,
+                "status": keterangan,
+            }
+        )
+
+    if getattr(args, "json", False):
+        _print(items)
+        return 0
+
+    print("=" * 80)
+    print(f"AUDIT STATUS KALENDER LOGBOOK ({days_count} HARI TERAKHIR)")
+    print(f"Rentang: {dates[0].isoformat()} s/d {dates[-1].isoformat()}")
+    print("=" * 80)
+    print(f"{'TANGGAL':<12} {'HARI':<10} {'STATUS BADGE':<15} {'KETERANGAN'}")
+    print("-" * 80)
+    for it in items:
+        print(f"{it['date']:<12} {it['day']:<10} {it['badge']:<15} {it['status']}")
+    print("=" * 80)
+    print(
+        f"Ringkasan: {badge_counts['[TERKIRIM]']} Terkirim | "
+        f"{badge_counts['[REVIEW]']} Perlu Review | "
+        f"{badge_counts['[INPUT]']} Perlu Input | "
+        f"{badge_counts['[LIBUR]']} Libur | "
+        f"{badge_counts['[GAGAL]']} Gagal | "
+        f"{badge_counts['[BELUM_DIISI]']} Belum Diisi"
+    )
+    print("=" * 80)
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Menampilkan metrik keandalan operasional, statistik durasi p95, dan rasio edit."""
+    d_end = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    days_count = max(1, getattr(args, "days", 20))
+    d_start = d_end - timedelta(days=days_count - 1)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    all_runs = store.list_runs()
+    runs = [r for r in all_runs if d_start <= r.work_date <= d_end]
+
+    total_runs = len(runs)
+    successful_runs = sum(
+        1 for r in runs if r.status in (Status.BERHASIL, Status.SUDAH_TERKIRIM)
+    )
+    failed_runs = sum(
+        1 for r in runs if r.status in (Status.GAGAL, Status.CRASH, Status.TERKUNCI)
+    )
+    success_rate = round((successful_runs / total_runs * 100.0), 1) if total_runs > 0 else 0.0
+
+    durations = [float(r.duration_ms) for r in runs if r.duration_ms > 0]
+    avg_duration_ms = round(sum(durations) / len(durations), 1) if durations else 0.0
+    p50_duration_ms = calculate_median(durations)
+    p95_duration_ms = calculate_percentile(durations, 95.0)
+
+    tokens_in = sum(r.tokens_in for r in runs)
+    tokens_out = sum(r.tokens_out for r in runs)
+    total_tokens = tokens_in + tokens_out
+
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT edit_ratio, work_date FROM entries WHERE work_date >= ? AND work_date <= ?;",
+            (d_start.isoformat(), d_end.isoformat()),
+        ).fetchall()
+
+    edit_ratios = [float(r["edit_ratio"]) for r in rows if r["edit_ratio"] is not None]
+    median_edit_ratio = calculate_median(edit_ratios)
+    avg_edit_ratio = round(sum(edit_ratios) / len(edit_ratios), 2) if edit_ratios else 0.0
+
+    metrics = {
+        "days": days_count,
+        "from_date": d_start.isoformat(),
+        "to_date": d_end.isoformat(),
+        "total_runs": total_runs,
+        "successful_runs": successful_runs,
+        "failed_runs": failed_runs,
+        "success_rate_pct": success_rate,
+        "durations_ms": {
+            "avg": avg_duration_ms,
+            "p50": p50_duration_ms,
+            "p95": p95_duration_ms,
+        },
+        "tokens": {
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "total": total_tokens,
+        },
+        "edit_ratio": {
+            "median": median_edit_ratio,
+            "avg": avg_edit_ratio,
+            "count": len(edit_ratios),
+        },
+        "total_entries": len(rows),
+    }
+
+    if getattr(args, "json", False):
+        _print(metrics)
+        return 0
+
+    print("=" * 80)
+    print(f"OPERATIONAL RELIABILITY REPORT ({days_count} HARI TERAKHIR)")
+    print(f"Rentang Tanggal: {d_start.isoformat()} s/d {d_end.isoformat()}")
+    print("=" * 80)
+    print("METRIK EKSEKUSI PIPELINE:")
+    print(f"  Total Eksekusi       : {total_runs}")
+    print(f"  Berhasil / Terkirim  : {successful_runs}")
+    print(f"  Gagal / Terkunci     : {failed_runs}")
+    print(f"  Tingkat Keberhasilan : {success_rate:.1f}%")
+    print("\nDURASI OPERASIONAL (ms):")
+    print(f"  Rata-rata Durasi     : {avg_duration_ms:.1f} ms")
+    print(f"  Median (p50)         : {p50_duration_ms:.1f} ms")
+    print(f"  95th Percentile (p95): {p95_duration_ms:.1f} ms")
+    print("\nKONSUMSI TOKEN LLM:")
+    print(f"  Tokens Masuk (Prompt): {tokens_in:,}")
+    print(f"  Tokens Keluar (Draft): {tokens_out:,}")
+    print(f"  Total Token          : {total_tokens:,}")
+    print("\nKUALITAS DRAF (EDIT RATIO):")
+    print(f"  Median Edit Ratio    : {median_edit_ratio:.2f}")
+    print(f"  Rata-rata Edit Ratio : {avg_edit_ratio:.2f}")
+    print(f"  Total Entri Terdok.  : {len(rows)} entri ({len(edit_ratios)} dengan metrik edit)")
+    print("=" * 80)
+    return 0
+
+
+@dataclass
+class CliResult:
+    """Hasil eksekusi terisolasi perintah CLI."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    output: str
+    exception: BaseException | None = None
+
+
+class CliRunner:
+    """Helper untuk menjalankan dan menguji CLI secara terisolasi tanpa subproses eksternal."""
+
+    def invoke(
+        self,
+        app: Any = None,
+        args: list[str] | None = None,
+        input: str | None = None,
+        env: dict[str, str] | None = None,
+        catch_exceptions: bool = True,
+    ) -> CliResult:
+        import os
+        from unittest.mock import patch
+
+        if isinstance(app, (list, tuple)):
+            args = list(app)
+            app = main
+        elif app is None:
+            app = main
+
+        args = list(args) if args is not None else []
+
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        stdin_buf = io.StringIO(input) if input is not None else io.StringIO()
+
+        exit_code = 0
+        caught_exc: BaseException | None = None
+
+        env_patcher = patch.dict(os.environ, env) if env else None
+        if env_patcher:
+            env_patcher.start()
+
+        orig_stdout, orig_stderr, orig_stdin = sys.stdout, sys.stderr, sys.stdin
+        sys.stdout, sys.stderr, sys.stdin = stdout_buf, stderr_buf, stdin_buf
+
+        try:
+            if callable(app):
+                exit_code = app(args)
+            elif isinstance(app, argparse.ArgumentParser):
+                parsed = app.parse_args(args)
+                if hasattr(parsed, "func"):
+                    ret = parsed.func(parsed)
+                    if isinstance(ret, (Status, str)):
+                        exit_code = get_exit_code(ret)
+                    else:
+                        exit_code = int(ret or 0)
+                else:
+                    exit_code = 0
+            else:
+                exit_code = main(args)
+        except SystemExit as exc:
+            if isinstance(exc.code, int):
+                exit_code = exc.code
+            elif exc.code is None:
+                exit_code = 0
+            else:
+                exit_code = 1
+                stderr_buf.write(str(exc.code))
+        except BaseException as exc:
+            caught_exc = exc
+            if not catch_exceptions:
+                raise
+            exit_code = 1
+            stderr_buf.write(f"Exception: {exc}\n")
+        finally:
+            sys.stdout, sys.stderr, sys.stdin = orig_stdout, orig_stderr, orig_stdin
+            if env_patcher:
+                env_patcher.stop()
+
+        stdout_str = stdout_buf.getvalue()
+        stderr_str = stderr_buf.getvalue()
+        output_str = stdout_str + stderr_str
+
+        return CliResult(
+            exit_code=exit_code if exit_code is not None else 0,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            output=output_str,
+            exception=caught_exc,
+        )
+
+
+def build_parser(prog: str = "magang-log") -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--base-url", help="default: portal MagangHub (halaman Riwayat)")
     common.add_argument("--auth-state", default="data/auth/state.json")
@@ -588,6 +961,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless", action="store_true", help="tanpa jendela (uji dulu lewat `check`)"
     )
     common.add_argument("--config", help="path file konfigurasi YAML (default: config/config.yaml)")
+    common.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="tampilkan detail error & stack trace lengkap saat terjadi kesalahan",
+    )
+
+    parser = argparse.ArgumentParser(prog=prog, parents=[common], description=__doc__)
+
+
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("login", parents=[common], help="login manual sekali, simpan sesi").set_defaults(
@@ -600,6 +984,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="jalankan alur pipeline harian logbook otomatis (coordinator & state machine)",
     )
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument(
+        "--mode",
+        choices=["review", "resume"],
+        help="mode eksekusi pipeline: review (buka interaktif review) | resume (pulihkan dari checkpoint)",
+    )
     p.add_argument(
         "--dry-run", action="store_true", help="jalankan simulasi dry-run tanpa submit final"
     )
@@ -644,7 +1033,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("text", help="isi catatan refleksi")
     p.add_argument(
+        "--type",
         "--kind",
+        dest="kind",
         required=True,
         choices=["aktivitas", "pembelajaran", "kendala"],
         help="kategori catatan: aktivitas | pembelajaran | kendala",
@@ -652,6 +1043,38 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_note)
+
+    p = sub.add_parser(
+        "status",
+        parents=[common],
+        help="audit kalender dan status entri logbook beberapa hari terakhir (grid/tabel visual)",
+    )
+    p.add_argument(
+        "--days",
+        type=int,
+        default=14,
+        help="jumlah hari ke belakang untuk diaudit (default: 14)",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD batas akhir audit (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser(
+        "report",
+        parents=[common],
+        help="tampilkan metrik keandalan operasional, statistik durasi p95, dan rasio edit",
+    )
+    p.add_argument(
+        "--days",
+        type=int,
+        default=20,
+        help="jumlah hari ke belakang untuk dihitung metriknya (default: 20)",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD batas akhir metrik (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser(
         "gate",
@@ -687,6 +1110,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
     p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser(
@@ -706,12 +1130,20 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="isi, centang pernyataan setelah Anda setuju, kirim, verifikasi",
     )
-    p.add_argument("--entry", required=True, help="file JSON entri")
+    p.add_argument(
+        "--entry",
+        help="file JSON entri (opsional, jika kosong dimuat otomatis dari ledger)",
+    )
+    p.add_argument(
+        "--date",
+        help="YYYY-MM-DD (default: hari ini, bila --entry tidak dispesifikasikan)",
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
         help="DRY-RUN: isi kolom dan verifikasi tanpa mencentang atau mengirim",
     )
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_submit)
 
     p = sub.add_parser(
@@ -737,15 +1169,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    verbose = bool(getattr(args, "verbose", False))
     try:
         ret = args.func(args)
         if isinstance(ret, (Status, str)):
             return get_exit_code(ret)
         return int(ret or 0)
     except Exception as exc:  # noqa: BLE001
-        print(f"FATAL: {exc}", file=sys.stderr)
+        if verbose:
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
         return EXIT_CODES[Status.CRASH]
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
