@@ -14,7 +14,7 @@ from .collectors.strength import build_drafting_payload, evaluate_evidence_stren
 from .drafter.models import LogEntryDraft
 from .exporter import export_logbook
 from .gates import GateDecision, PreflightGate
-from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status
+from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status, get_exit_code
 from .notify import send_system_notification
 from .pipeline import ArtifactStore, DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
@@ -713,7 +713,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        ret = args.func(args)
+        if isinstance(ret, (Status, str)):
+            return get_exit_code(ret)
+        return int(ret or 0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"FATAL: {exc}", file=sys.stderr)
+        return EXIT_CODES[Status.CRASH]
 
 
 if __name__ == "__main__":

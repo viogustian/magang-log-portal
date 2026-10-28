@@ -14,6 +14,7 @@ from typing import Any, Protocol
 from .drafter.models import LogEntryDraft
 from .drafter.stage import DraftingStage
 from .gates import GateDecision, PreflightGate, generate_run_id
+from .logger import StructuredLogger
 from .models import (
     EXIT_CODES,
     ApprovedEntry,
@@ -388,6 +389,7 @@ class PipelineCoordinator:
         portal: PortalStage | None = None,
         artifacts_dir: Path | None = None,
         auto_approval_engine: Any | None = None,
+        logger: StructuredLogger | None = None,
     ) -> None:
         self.store = store
         self.preflight_gate = preflight_gate
@@ -399,6 +401,11 @@ class PipelineCoordinator:
         self.artifacts_dir = artifacts_dir or Path("data/runs")
         self.artifact_store = ArtifactStore(self.artifacts_dir)
         self.auto_approval_engine = auto_approval_engine
+        if logger is not None:
+            self.logger: StructuredLogger | None = logger
+        else:
+            log_dir = self.artifacts_dir.parent / "logs"
+            self.logger = StructuredLogger(log_file=log_dir / "magang-log.jsonl")
 
     def _record_audit_run(
         self,
@@ -427,6 +434,30 @@ class PipelineCoordinator:
                 error_code=error_code,
             )
         )
+        if self.logger is not None:
+            level = (
+                "ERROR"
+                if status in (Status.GAGAL, Status.TERKUNCI, Status.CRASH)
+                else (
+                    "WARNING"
+                    if status in (Status.PERLU_REVIEW, Status.PERLU_INPUT, Status.LOGIN_DIPERLUKAN)
+                    else "INFO"
+                )
+            )
+            try:
+                self.logger.log_event(
+                    run_id=run_id,
+                    work_date=target_date,
+                    stage=stage.value if hasattr(stage, "value") else str(stage),
+                    status=status,
+                    duration_ms=duration_ms,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    error_code=error_code,
+                    level=level,
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
         return duration_ms
 
     def run(
@@ -976,6 +1007,22 @@ class PipelineCoordinator:
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
+
+            if self.logger is not None:
+                try:
+                    self.logger.log_event(
+                        run_id=run_id,
+                        work_date=target_date,
+                        stage=sm.current_state.value,
+                        status=Status.GAGAL,
+                        duration_ms=duration_ms,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        error_code=err_name,
+                        level="ERROR",
+                    )
+                except Exception:  # noqa: BLE001, S110
+                    pass
 
             return PipelineResult(
                 run_id=run_id,

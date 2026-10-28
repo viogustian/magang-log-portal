@@ -37,11 +37,13 @@ class Status(StrEnum):
     PERLU_INPUT = "PERLU_INPUT"  # bukti tidak mencukupi, butuh catatan manual
     PERLU_REVIEW = "PERLU_REVIEW"  # validasi butuh tinjauan manusia atau tertunda
     VALIDATION_FAILED = "VALIDATION_FAILED"  # validasi draf gagal
+    VALIDATION_ERROR = "VALIDATION_ERROR"  # alias standar untuk kesalahan validasi draf
     TIDAK_DIKENAL = "TIDAK_DIKENAL"  # label status kalender tidak dikenal: fail-closed
+    CRASH = "CRASH"  # crash fatal atau kegagalan tak terduga
 
 
-# Kode keluar CLI (lihat PRD bagian 11.3)
-EXIT_CODES: dict[Status, int] = {
+# Kode keluar CLI (lihat PRD bagian 11.3 & issue 05-01)
+EXIT_CODES: dict[Status | str, int] = {
     Status.BERHASIL: 0,
     Status.SUDAH_TERKIRIM: 0,
     Status.LIBUR: 0,
@@ -51,11 +53,43 @@ EXIT_CODES: dict[Status, int] = {
     Status.PERLU_REVIEW: 10,
     Status.LOGIN_DIPERLUKAN: 20,
     Status.VALIDATION_FAILED: 30,
+    Status.VALIDATION_ERROR: 30,
     Status.GAGAL: 40,
     Status.TERKUNCI: 40,
     Status.LOKASI_TIDAK_TERSEDIA: 40,
     Status.TIDAK_DIKENAL: 40,
+    Status.CRASH: 1,
+    # String key compatibility
+    "BERHASIL": 0,
+    "SUDAH_TERKIRIM": 0,
+    "LIBUR": 0,
+    "DRYRUN": 0,
+    "PERLU_TINDAKAN": 10,
+    "PERLU_INPUT": 10,
+    "PERLU_REVIEW": 10,
+    "LOGIN_DIPERLUKAN": 20,
+    "VALIDATION_FAILED": 30,
+    "VALIDATION_ERROR": 30,
+    "GAGAL": 40,
+    "TERKUNCI": 40,
+    "LOKASI_TIDAK_TERSEDIA": 40,
+    "TIDAK_DIKENAL": 40,
+    "CRASH": 1,
 }
+
+
+def get_exit_code(status: Status | str | None) -> int:
+    """Mengembalikan kode keluar proses standar untuk status yang diberikan."""
+    if status is None:
+        return 1
+    if isinstance(status, Status):
+        return EXIT_CODES.get(status, 1)
+    status_str = str(status).strip()
+    try:
+        enum_val = Status(status_str)
+        return EXIT_CODES.get(enum_val, EXIT_CODES.get(status_str, 1))
+    except ValueError:
+        return EXIT_CODES.get(status_str, 1)
 
 
 @dataclass(frozen=True)
