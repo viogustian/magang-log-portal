@@ -1,3 +1,11 @@
+from .doctor import (
+    CheckResult,
+    CheckStatus,
+    Doctor,
+    DoctorReport,
+    HealthCheck,
+    get_default_health_checks,
+)
 from .exporter import compile_logbook_markdown, export_logbook
 from .logger import (
     StructuredLogEntry,
@@ -28,8 +36,13 @@ from .pipeline import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "CheckResult",
+    "CheckStatus",
+    "Doctor",
+    "DoctorReport",
     "EXIT_CODES",
     "FakeNotifier",
+    "HealthCheck",
     "InvalidTransitionError",
     "NOTIFICATION_MATRIX",
     "Notifier",
@@ -47,6 +60,7 @@ __all__ = [
     "compile_logbook_markdown",
     "export_logbook",
     "format_indonesian_date",
+    "get_default_health_checks",
     "get_exit_code",
     "get_logger",
     "get_notifier",
