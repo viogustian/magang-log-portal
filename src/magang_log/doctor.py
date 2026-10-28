@@ -258,8 +258,16 @@ class SessionCheck:
 class SchedulerCheck:
     """Memverifikasi registrasi jadwal tugas pada Windows Task Scheduler."""
 
-    def __init__(self, task_name: str = "MagangLogSubmission") -> None:
-        self.task_name = task_name
+    def __init__(self, task_name: str | list[str] = "MagangLog-Review") -> None:
+        if isinstance(task_name, str):
+            self.task_name = task_name
+            if task_name in ("MagangLog-Review", "MagangLogSubmission"):
+                self.task_names = ["MagangLog-Review", "MagangLog-Resume", "MagangLogSubmission"]
+            else:
+                self.task_names = [task_name]
+        else:
+            self.task_names = list(task_name)
+            self.task_name = self.task_names[0] if self.task_names else "MagangLog-Review"
 
     def check(self) -> CheckResult:
         if sys.platform != "win32":
@@ -280,27 +288,32 @@ class SchedulerCheck:
                 remediation="Pastikan Windows System32 berada di environment variable PATH.",
             )
 
+        registered: list[str] = []
         try:
-            res = subprocess.run(
-                ["schtasks", "/query", "/tn", self.task_name, "/fo", "CSV"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if res.returncode == 0:
+            for tn in self.task_names:
+                res = subprocess.run(
+                    ["schtasks", "/query", "/tn", tn, "/fo", "CSV"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if res.returncode == 0:
+                    registered.append(tn)
+
+            if registered:
                 return CheckResult(
                     name="Windows Task Scheduler",
                     status=CheckStatus.PASS,
-                    message=f"Tugas '{self.task_name}' terdaftar aktif di Windows Task Scheduler.",
-                    details={"task_name": self.task_name},
+                    message=f"Tugas '{', '.join(registered)}' terdaftar aktif di Windows Task Scheduler.",
+                    details={"task_names": registered},
                 )
             return CheckResult(
                 name="Windows Task Scheduler",
                 status=CheckStatus.WARN,
                 message=f"Tugas '{self.task_name}' belum terdaftar di Windows Task Scheduler.",
-                remediation="Daftarkan jadwal tugas otomatis dengan perintah 'magang-log schedule register'.",
-                details={"task_name": self.task_name, "returncode": res.returncode},
+                remediation="Daftarkan jadwal tugas otomatis dengan perintah 'magang-log schedule register' atau jalankan 'powershell -File scripts/install_task.ps1 -Install'.",
+                details={"task_names": self.task_names},
             )
         except Exception as exc:  # noqa: BLE001
             return CheckResult(
@@ -310,6 +323,7 @@ class SchedulerCheck:
                 remediation="Periksa izin akun Anda untuk menjalankan perintah 'schtasks'.",
                 details={"error": str(exc)},
             )
+
 
 
 class GitRepositoriesCheck:
