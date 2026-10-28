@@ -204,9 +204,11 @@ class ReviewSession:
                 [
                     "\n" + "-" * 60,
                     f"METRIK VALIDASI: {status_str}",
-                    f"  • Grounding Score : {validation.grounding_score:.0%}",
                 ]
             )
+            grounding_score = getattr(validation, "grounding_score", None)
+            if grounding_score is not None:
+                lines.append(f"  • Grounding Score : {grounding_score:.0%}")
             if validation.errors:
                 lines.append("  • Errors:")
                 for err in validation.errors:
@@ -215,9 +217,10 @@ class ReviewSession:
                 lines.append("  • Warnings:")
                 for warn in validation.warnings:
                     lines.append(f"      - {warn}")
-            if validation.detected_filler:
+            detected_filler = getattr(validation, "detected_filler", None)
+            if detected_filler:
                 lines.append("  • Filler Terdeteksi:")
-                for filler in validation.detected_filler:
+                for filler in detected_filler:
                     lines.append(f"      - '{filler}'")
 
         lines.append("=" * 60)
@@ -423,6 +426,20 @@ class ReviewSession:
                 notes=notes or [],
                 artifacts_dir=artifacts_dir,
             )
+            if self.store is not None and res.draft is not None:
+                from ..pipeline import compute_content_hash, EntryRecord
+
+                draft_hash = compute_content_hash(res.draft.model_dump_json())
+                self.store.save_entry(
+                    EntryRecord(
+                        work_date=target_date,
+                        draft_json=res.draft.model_dump_json(),
+                        prompt_version=getattr(res.draft, "prompt_version", "v1"),
+                        model=getattr(res.draft, "model", "gemini-3.5-flash"),
+                        content_hash=draft_hash,
+                    )
+                )
+
             self._print("Regenerasi draf berhasil diselesaikan.")
             return res.draft, res.validation
         except (RuntimeError, ValueError, OSError) as exc:

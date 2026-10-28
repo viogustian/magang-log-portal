@@ -151,11 +151,14 @@ def form_heading(page: Page, d: date) -> Locator:
 
 def location_block(page: Page) -> Locator:
     """Blok indikator status izin lokasi pada form."""
-    return form(page).locator(".location-permission")
+    loc = form(page).locator(".location-permission")
+    if loc.count() > 0:
+        return loc
+    return form(page).locator("div").filter(has_text=re.compile(r"lokasi", re.IGNORECASE))
 
 
 def location_ok(page: Page) -> Locator:
-    return location_block(page).get_by_text(LOCATION_OK_TEXT)
+    return form(page).get_by_text(LOCATION_OK_TEXT)
 
 
 def location_error(page: Page) -> Locator:
@@ -163,7 +166,7 @@ def location_error(page: Page) -> Locator:
     pattern = re.compile(
         r"tidak dapat diakses|gagal|ditolak|tidak ditemukan|izinkan akses", re.IGNORECASE
     )
-    return location_block(page).filter(has_text=pattern)
+    return form(page).filter(has_text=pattern)
 
 
 def attendance_input(page: Page) -> Locator:

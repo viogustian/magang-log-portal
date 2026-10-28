@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import statistics
 import sys
 from dataclasses import dataclass, replace
@@ -418,9 +419,57 @@ def cmd_run(args: argparse.Namespace) -> int:
         notify_on_success = bool(getattr(cfg.notify, "notify_on_success", False))
         notifier = WindowsToastNotifier(notify_on_success=notify_on_success)
 
+    drafter_stage = None
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key and "PYTEST_CURRENT_TEST" not in os.environ:
+        from .drafter import DraftingStage, EvidenceDrafter, GeminiModelClient
+        from .validator import MultiStageValidator
+
+        client = GeminiModelClient(
+            api_key=api_key,
+            model=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+            temperature=getattr(cfg.llm, "temperature", 0.2),
+        )
+        evidence_drafter = EvidenceDrafter(
+            model_client=client,
+            model_name=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+        )
+        drafter_stage = DraftingStage(
+            drafter=evidence_drafter,
+            validator=MultiStageValidator(),
+        )
+
+    class CliCollectorStage:
+        def __init__(self, config: Any, store: LedgerStore) -> None:
+            self.config = config
+            self.store = store
+
+        def collect(self, target_date: date) -> list[EvidenceItem]:
+            from .collectors.factory import collect_and_sanitize_evidence
+            from .models import EvidenceItem
+
+            sanitized = collect_and_sanitize_evidence(target_date, self.config, self.store)
+            items: list[EvidenceItem] = []
+            for e in sanitized:
+                items.append(
+                    EvidenceItem(
+                        id=e.id,
+                        work_date=target_date,
+                        source=e.source,
+                        kind=e.kind,
+                        ts=e.ts,
+                        title=e.title,
+                        detail=e.detail,
+                        strength=e.strength,
+                    )
+                )
+            return items
+
     coordinator = PipelineCoordinator(
         store=store,
         preflight_gate=gate,
+        collector=CliCollectorStage(cfg, store),
+        drafter=drafter_stage,
         portal=portal,
         approval=approval,
         artifacts_dir=Path(getattr(args, "artifacts_dir", "data/runs")),
@@ -616,17 +665,59 @@ def cmd_review(args: argparse.Namespace) -> int:
         )
         return EXIT_CODES[Status.PERLU_INPUT]
 
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+
     # 2. Ambil bukti pendukung dan catatan
     evidence = store.get_evidence(d)
     notes = store.get_notes(d)
+    if not evidence:
+        from .collectors.factory import collect_and_sanitize_evidence
+        from .models import EvidenceItem
+
+        sanitized = collect_and_sanitize_evidence(d, cfg, store)
+        evidence = [
+            EvidenceItem(
+                id=e.id,
+                work_date=d,
+                source=e.source,
+                kind=e.kind,
+                ts=e.ts,
+                title=e.title,
+                detail=e.detail,
+                strength=e.strength,
+            )
+            for e in sanitized
+        ]
 
     # 3. Ambil laporan validasi jika ada di artifact_store
     validation = artifact_store.load_validation(d)
 
     # 4. Inisialisasi ReviewSession
+    drafter_stage = None
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key and "PYTEST_CURRENT_TEST" not in os.environ:
+        from .drafter import DraftingStage, EvidenceDrafter, GeminiModelClient
+        from .validator import MultiStageValidator
+
+        client = GeminiModelClient(
+            api_key=api_key,
+            model=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+            temperature=getattr(cfg.llm, "temperature", 0.2),
+        )
+        evidence_drafter = EvidenceDrafter(
+            model_client=client,
+            model_name=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+        )
+        drafter_stage = DraftingStage(
+            drafter=evidence_drafter,
+            validator=MultiStageValidator(),
+        )
+
     session = ReviewSession(
         store=store,
         artifact_store=artifact_store,
+        drafter_stage=drafter_stage,
     )
 
     approved = session.review(

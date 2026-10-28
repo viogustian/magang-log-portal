@@ -208,3 +208,9 @@ $RECYCLE.BIN/
 .agents
 .scratch
 prd.md
+config.yaml
+
+docs/adr
+docs/agents
+
+GLOSSARY.md

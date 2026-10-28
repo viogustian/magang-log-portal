@@ -60,8 +60,10 @@ class GitCollector:
         repositories: Sequence[Path | str] | None = None,
         author_email: str | None = None,
         include_diff: bool = False,
+        repos: Sequence[Path | str] | None = None,
     ) -> None:
-        self.repositories = list(repositories) if repositories is not None else None
+        target_repos = repositories if repositories is not None else repos
+        self.repositories = list(target_repos) if target_repos is not None else None
         self.author_email = author_email
         self.include_diff = include_diff
 

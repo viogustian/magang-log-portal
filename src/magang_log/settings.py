@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
@@ -178,12 +179,33 @@ def find_repo_root(start: Path | None = None) -> Path:
     return cur
 
 
+def load_dotenv(env_path: Path | None = None) -> None:
+    """Memuat variabel dari file .env lokal jika ada dan belum disetel di lingkungan sistem."""
+    target = env_path or (find_repo_root() / ".env")
+    if not target.exists():
+        return
+    try:
+        content = target.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'\"")
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except OSError:
+        pass
+
+
 def load_config(
     path: str | Path | None = None,
     root_dir: Path | None = None,
 ) -> AppConfig:
     """Memuat dan memvalidasi konfigurasi YAML dengan skema ketat."""
     root = (root_dir or find_repo_root()).resolve()
+    load_dotenv(root / ".env")
 
     if path is None:
         default_yaml = root / "config" / "config.yaml"

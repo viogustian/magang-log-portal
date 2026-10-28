@@ -53,7 +53,7 @@ class PortalConfig:
     headless: bool = False  # lokasi lebih andal pada browser berjendela; uji dengan `check`
     channel: str | None = "chrome"  # Chrome terpasang; None = Chromium bawaan Playwright
     timeout_ms: int = 15_000
-    location_timeout_ms: int = 10_000
+    location_timeout_ms: int = 25_000
     min_chars: int = 100  # tertulis di form: "Minimal 100 karakter"
     max_chars: int = 5000  # atribut maxlength pada textarea
     allow_location: bool = True  # False hanya untuk menguji jalur "lokasi tidak tersedia"
@@ -108,8 +108,13 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             self._ctx = self._browser.new_context(**kwargs)
             self._ctx.set_default_timeout(cfg.timeout_ms)
             if cfg.allow_location:
-                # Hanya untuk origin portal. Koordinat TIDAK di-override.
+                # Hanya untuk origin portal. Koordinat dibaca langsung dari sensor fisik OS perangkat.
                 self._ctx.grant_permissions(["geolocation"], origin=_origin(cfg.base_url))
+                from .device_location import get_windows_device_location
+
+                device_loc = get_windows_device_location()
+                if device_loc is not None:
+                    self._ctx.set_geolocation(device_loc)
             self._ctx.tracing.start(screenshots=True, snapshots=True, sources=True)
             self.page = self._ctx.new_page()
         except Exception:
@@ -151,13 +156,20 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
                 raise
         self.session_mgr.check_page(self.page)
         try:
-            sel.history_heading(self.page).wait_for(state="visible", timeout=self.cfg.timeout_ms)
+            sel.history_heading(self.page).wait_for(state="visible", timeout=3000)
         except PlaywrightTimeout:
-            self.session_mgr.check_page(self.page)
-            url = self.page.url
-            if any(marker in url for marker in self.cfg.login_markers):
-                raise LoginRequired(url=url) from None
-            raise PortalError(f"halaman Riwayat Kehadiran tidak muncul (url: {url})") from None
+            # Jika Nuxt SPA me-redirect cold-load ke /dashboard (Beranda), klik menu 'Riwayat'
+            riwayat_nav = self.page.locator("text=Riwayat").first
+            if riwayat_nav.is_visible():
+                riwayat_nav.click()
+            try:
+                sel.history_heading(self.page).wait_for(state="visible", timeout=self.cfg.timeout_ms)
+            except PlaywrightTimeout:
+                self.session_mgr.check_page(self.page)
+                url = self.page.url
+                if any(marker in url for marker in self.cfg.login_markers):
+                    raise LoginRequired(url=url) from None
+                raise PortalError(f"halaman Riwayat Kehadiran tidak muncul (url: {url})") from None
 
     def read_day(self, d: date) -> DayInfo:
         button = sel.day_button(self.page, d)
@@ -272,6 +284,9 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
     # ── pengisian dan pengiriman ────────────────────────────────────────────
 
     def submit(self, entry: ApprovedEntry, *, dry_run: bool = False) -> PortalResult:
+        if self.page is None:
+            with self:
+                return self.submit(entry, dry_run=dry_run)
         problems = entry.problems(self.cfg.min_chars, self.cfg.max_chars)
         if problems:
             raise ValueError("; ".join(problems))

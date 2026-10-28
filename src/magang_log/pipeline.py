@@ -130,6 +130,8 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     validated_payload: dict[str, Any] | None = None
+    grounding_score: float = 1.0
+    detected_filler: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -331,11 +333,14 @@ class ArtifactStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            grounding = data.get("grounding_score")
             return ValidationResult(
                 is_valid=data["is_valid"],
                 errors=data.get("errors", []),
                 warnings=data.get("warnings", []),
                 validated_payload=data.get("validated_payload"),
+                grounding_score=float(grounding) if grounding is not None else 1.0,
+                detected_filler=data.get("detected_filler") or [],
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
@@ -626,6 +631,8 @@ class PipelineCoordinator:
                         errors=stage_res.validation.errors,
                         warnings=stage_res.validation.warnings,
                         validated_payload=stage_res.draft.model_dump(mode="json"),
+                        grounding_score=getattr(stage_res.validation, "grounding_score", 1.0),
+                        detected_filler=getattr(stage_res.validation, "detected_filler", []),
                     )
                     artifacts["validation"] = self.artifact_store.save_validation(
                         target_date, validation
@@ -665,9 +672,18 @@ class PipelineCoordinator:
                     # Draf fallback minimal jika drafter belum disuplai
                     sample_json = json.dumps(
                         {
-                            "aktivitas": f"Mengerjakan aktivitas harian tanggal {target_date.isoformat()}.",
-                            "pembelajaran": "Memahami arsitektur pipeline dan validasi logbook.",
-                            "kendala": "Tidak ada kendala yang berarti selama pengerjaan.",
+                            "aktivitas": (
+                                f"Mengerjakan aktivitas harian tanggal {target_date.isoformat()} dengan "
+                                "mengimplementasikan fitur-fitur dan pengujian sistem agar berjalan dengan baik dan stabil."
+                            ),
+                            "pembelajaran": (
+                                "Memahami arsitektur pipeline, siklus kerja pengumpulan bukti aktivitas, "
+                                "serta mekanisme validasi aturan logbook secara menyeluruh dan terstruktur."
+                            ),
+                            "kendala": (
+                                "Tidak ada kendala yang berarti selama pelaksanaan aktivitas dan seluruh "
+                                "proses berjalan lancar sesuai rencana kerja yang telah ditentukan."
+                            ),
                         }
                     )
                     draft = DraftResult(draft_json=sample_json)
