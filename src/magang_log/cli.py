@@ -336,6 +336,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             artifact_store=ArtifactStore(Path(getattr(args, "artifacts_dir", "data/runs"))),
         )
 
+    notifier = None
+    if "toast" in getattr(cfg.notify, "channels", ["toast"]):
+        from .notify import WindowsToastNotifier
+
+        notify_on_success = bool(getattr(cfg.notify, "notify_on_success", False))
+        notifier = WindowsToastNotifier(notify_on_success=notify_on_success)
+
     coordinator = PipelineCoordinator(
         store=store,
         preflight_gate=gate,
@@ -343,6 +350,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         approval=approval,
         artifacts_dir=Path(getattr(args, "artifacts_dir", "data/runs")),
         auto_approval_engine=auto_approval_engine,
+        notifier=notifier,
     )
 
     result = coordinator.run(

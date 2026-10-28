@@ -143,6 +143,7 @@ class SourcesSettings(StrictBaseModel):
 
 class NotifySettings(StrictBaseModel):
     channels: list[str] = Field(default_factory=lambda: ["toast"])
+    notify_on_success: bool = False
 
 
 class RetentionDaysSettings(StrictBaseModel):

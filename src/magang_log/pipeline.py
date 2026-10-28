@@ -25,6 +25,7 @@ from .models import (
     RunRecord,
     Status,
 )
+from .notify import Notifier
 from .store import LedgerStore
 
 
@@ -390,6 +391,7 @@ class PipelineCoordinator:
         artifacts_dir: Path | None = None,
         auto_approval_engine: Any | None = None,
         logger: StructuredLogger | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.store = store
         self.preflight_gate = preflight_gate
@@ -401,6 +403,7 @@ class PipelineCoordinator:
         self.artifacts_dir = artifacts_dir or Path("data/runs")
         self.artifact_store = ArtifactStore(self.artifacts_dir)
         self.auto_approval_engine = auto_approval_engine
+        self.notifier = notifier
         if logger is not None:
             self.logger: StructuredLogger | None = logger
         else:
@@ -458,6 +461,13 @@ class PipelineCoordinator:
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
+
+        if self.notifier is not None:
+            try:
+                self.notifier.notify(status=status, work_date=target_date)
+            except Exception:  # noqa: BLE001, S110
+                pass
+
         return duration_ms
 
     def run(
@@ -1021,6 +1031,12 @@ class PipelineCoordinator:
                         error_code=err_name,
                         level="ERROR",
                     )
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+            if self.notifier is not None:
+                try:
+                    self.notifier.notify(status=Status.GAGAL, work_date=target_date)
                 except Exception:  # noqa: BLE001, S110
                     pass
 
