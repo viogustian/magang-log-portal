@@ -1110,6 +1110,32 @@ def cmd_preview_evidence(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Meluncurkan server lokal FastAPI dan aplikasi desktop Magang Log (LocalDashboard)."""
+    from .server.lifecycle import launch_server_and_desktop
+
+    return launch_server_and_desktop(
+        view="dashboard",
+        host=getattr(args, "host", "127.0.0.1"),
+        port=getattr(args, "port", 8000),
+        exe_path=getattr(args, "exe", None),
+        server_only=bool(getattr(args, "server_only", False)),
+    )
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Meluncurkan server lokal FastAPI dan wizard onboarding desktop Magang Log (SetupWizard)."""
+    from .server.lifecycle import launch_server_and_desktop
+
+    return launch_server_and_desktop(
+        view="setup",
+        host=getattr(args, "host", "127.0.0.1"),
+        port=getattr(args, "port", 8000),
+        exe_path=getattr(args, "exe", None),
+        server_only=bool(getattr(args, "server_only", False)),
+    )
+
+
 @dataclass
 class CliResult:
     """Hasil eksekusi terisolasi perintah CLI."""
@@ -1462,6 +1488,62 @@ def build_parser(prog: str = "magang-log") -> argparse.ArgumentParser:
     p_prev.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
     p_prev.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p_prev.set_defaults(func=cmd_preview_evidence)
+
+    # Subcommand: ui
+    p_ui = sub.add_parser(
+        "ui",
+        parents=[common],
+        help="buka antarmuka desktop Magang Log (LocalDashboard)",
+    )
+    p_ui.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="port server lokal FastAPI (default: 8000)",
+    )
+    p_ui.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="host binding server lokal (harus loopback 127.0.0.1)",
+    )
+    p_ui.add_argument(
+        "--exe",
+        help="path kustom ke file executable desktop MagangLogPortal.exe",
+    )
+    p_ui.add_argument(
+        "--server-only",
+        action="store_true",
+        help="jalankan server backend saja tanpa meluncurkan GUI desktop",
+    )
+    p_ui.set_defaults(func=cmd_ui)
+
+    # Subcommand: setup
+    p_setup = sub.add_parser(
+        "setup",
+        parents=[common],
+        help="buka wizard onboarding desktop Magang Log (SetupWizard)",
+    )
+    p_setup.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="port server lokal FastAPI (default: 8000)",
+    )
+    p_setup.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="host binding server lokal (harus loopback 127.0.0.1)",
+    )
+    p_setup.add_argument(
+        "--exe",
+        help="path kustom ke file executable desktop MagangLogPortal.exe",
+    )
+    p_setup.add_argument(
+        "--server-only",
+        action="store_true",
+        help="jalankan server backend saja tanpa meluncurkan GUI desktop",
+    )
+    p_setup.set_defaults(func=cmd_setup)
 
     return parser
 
