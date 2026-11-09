@@ -351,3 +351,4 @@ public class GitFrequencyPanel : Panel
         UpdateSummary();
     }
 }
+

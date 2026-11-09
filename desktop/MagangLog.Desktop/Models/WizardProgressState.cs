@@ -29,6 +29,12 @@ public class WizardProgressState
     [JsonPropertyName("sources")]
     public SourcesConfig Sources { get; set; } = new();
 
+    [JsonPropertyName("review_mode")]
+    public string ReviewMode { get; set; } = "review";
+
+    [JsonPropertyName("full_access_confirmed")]
+    public bool FullAccessConfirmed { get; set; } = false;
+
     [JsonPropertyName("step_data")]
     public Dictionary<string, object?> StepData { get; set; } = new();
 

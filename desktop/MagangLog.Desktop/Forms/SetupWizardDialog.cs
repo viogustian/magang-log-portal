@@ -18,6 +18,7 @@ public class SetupWizardDialog : Form
     private readonly FolderListPanel _folderPanel;
     private readonly JobRolePanel _rolePanel;
     private readonly GitFrequencyPanel _frequencyPanel;
+    private readonly SubmissionModePanel _submissionModePanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
@@ -36,6 +37,7 @@ public class SetupWizardDialog : Form
     public FolderListPanel FolderPanel => _folderPanel;
     public JobRolePanel RolePanel => _rolePanel;
     public GitFrequencyPanel FrequencyPanel => _frequencyPanel;
+    public SubmissionModePanel SubmissionModePanel => _submissionModePanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -151,6 +153,12 @@ public class SetupWizardDialog : Form
         _stepPanels[3].Controls.Add(_frequencyPanel);
         _frequencyPanel.BringToFront();
 
+        // Initialize and host SubmissionModePanel in Step 4
+        _submissionModePanel = new SubmissionModePanel();
+        _submissionModePanel.ModeChanged += (_, _) => EvaluateGateState();
+        _stepPanels[4].Controls.Add(_submissionModePanel);
+        _submissionModePanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -226,6 +234,11 @@ public class SetupWizardDialog : Form
         if (state.Sources != null)
         {
             _frequencyPanel.SetConfig(state.Sources);
+        }
+
+        if (!string.IsNullOrEmpty(state.ReviewMode))
+        {
+            _submissionModePanel.SetMode(state.ReviewMode, state.FullAccessConfirmed);
         }
 
         var stepToActivate = Math.Clamp(state.CurrentStep, 0, StepCount - 1);
@@ -320,6 +333,27 @@ public class SetupWizardDialog : Form
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
+        else if (_currentStep == 4)
+        {
+            if (_submissionModePanel == null || _submissionModePanel.IsGateSatisfied)
+            {
+                _btnNext.Enabled = true;
+                var modeName = _submissionModePanel?.ReviewMode switch
+                {
+                    "auto" => "Full Access (Otomatis)",
+                    "notify" => "Notifikasi Saja",
+                    _ => "Review Dulu"
+                };
+                _lblStatus.Text = $"Mode pengiriman '{modeName}' siap.";
+                _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _btnNext.Enabled = false;
+                _lblStatus.Text = "Centang konfirmasi persetujuan keamanan Full Access untuk melanjutkan.";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+        }
         else
         {
             _btnNext.Enabled = true;
@@ -361,6 +395,13 @@ public class SetupWizardDialog : Form
         {
             State.Sources = _frequencyPanel.GetConfig();
             State.SetStepData("sources", State.Sources);
+        }
+        else if (_currentStep == 4)
+        {
+            State.ReviewMode = _submissionModePanel.ReviewMode;
+            State.FullAccessConfirmed = _submissionModePanel.FullAccessConfirmed;
+            State.SetStepData("review_mode", State.ReviewMode);
+            State.SetStepData("full_access_confirmed", State.FullAccessConfirmed);
         }
 
         if (_currentStep >= StepCount - 1)

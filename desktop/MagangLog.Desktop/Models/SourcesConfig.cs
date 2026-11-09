@@ -25,3 +25,4 @@ public class SourcesConfig
     [JsonPropertyName("browser_consent")]
     public bool BrowserConsent { get; set; } = false;
 }
+
