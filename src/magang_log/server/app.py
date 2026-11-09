@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from .routers.calendar import router as calendar_router
 from .routers.dashboard import router as dashboard_router
+from .routers.entry import router as entry_router
 from .routers.health import router as health_router
 from .routers.portal import router as portal_router
 from .routers.setup import router as setup_router
@@ -24,6 +26,8 @@ def create_app() -> FastAPI:
     app.include_router(setup_router, prefix="/api")
     app.include_router(portal_router, prefix="/api")
     app.include_router(dashboard_router, prefix="/api")
+    app.include_router(entry_router, prefix="/api")
+    app.include_router(calendar_router, prefix="/api")
 
     return app
 
