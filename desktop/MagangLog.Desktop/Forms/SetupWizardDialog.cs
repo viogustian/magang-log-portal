@@ -15,6 +15,7 @@ public class SetupWizardDialog : Form
     private readonly Panel _contentContainer;
     private readonly Panel[] _stepPanels;
     private readonly RequirementListPanel _requirementPanel;
+    private readonly FolderListPanel _folderPanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
@@ -30,6 +31,7 @@ public class SetupWizardDialog : Form
     public Label StatusLabel => _lblStatus;
     public StepIndicatorPanel StepIndicator => _indicator;
     public RequirementListPanel RequirementPanel => _requirementPanel;
+    public FolderListPanel FolderPanel => _folderPanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -127,6 +129,12 @@ public class SetupWizardDialog : Form
         _stepPanels[0].Controls.Add(_requirementPanel);
         _requirementPanel.BringToFront();
 
+        // Initialize and host FolderListPanel in Step 1
+        _folderPanel = new FolderListPanel(_apiClient);
+        _folderPanel.GateStateChanged += (_, _) => EvaluateGateState();
+        _stepPanels[1].Controls.Add(_folderPanel);
+        _folderPanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -187,6 +195,11 @@ public class SetupWizardDialog : Form
     public void ApplyProgressState(WizardProgressState state)
     {
         State = state;
+        if (state.ProjectFolders != null && state.ProjectFolders.Count > 0)
+        {
+            _ = _folderPanel.LoadFoldersAsync(state.ProjectFolders);
+        }
+
         var stepToActivate = Math.Clamp(state.CurrentStep, 0, StepCount - 1);
         GoToStep(stepToActivate);
     }
@@ -212,7 +225,7 @@ public class SetupWizardDialog : Form
     }
 
     /// <summary>
-    /// Evaluates step-specific gates (e.g. Requirement gate on step 0).
+    /// Evaluates step-specific gates (e.g. Requirement gate on step 0, Folder gate on step 1).
     /// </summary>
     public void EvaluateGateState()
     {
@@ -229,6 +242,22 @@ public class SetupWizardDialog : Form
                 _btnNext.Enabled = false;
                 var count = _requirementPanel.UnmetCount;
                 _lblStatus.Text = $"{count} requirement belum terpenuhi — lihat item bertanda ❌/⚠️ di atas";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+        }
+        else if (_currentStep == 1)
+        {
+            if (_folderPanel == null || _folderPanel.HasValidFolders)
+            {
+                _btnNext.Enabled = true;
+                var count = _folderPanel?.ValidFolderCount ?? 0;
+                _lblStatus.Text = $"{count} folder proyek valid terdaftar.";
+                _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _btnNext.Enabled = false;
+                _lblStatus.Text = "Pilih minimal satu folder proyek yang valid untuk melanjutkan.";
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
@@ -255,6 +284,12 @@ public class SetupWizardDialog : Form
     /// </summary>
     public async Task HandleNextClickAsync()
     {
+        if (_currentStep == 1)
+        {
+            State.ProjectFolders = _folderPanel.GetValidFolderPaths();
+            State.SetStepData("project_folders", State.ProjectFolders);
+        }
+
         if (_currentStep >= StepCount - 1)
         {
             // Final step: finish wizard

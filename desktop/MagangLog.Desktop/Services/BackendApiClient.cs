@@ -68,6 +68,28 @@ public class BackendApiClient
     }
 
     /// <summary>
+    /// Validate directory paths for existence, readability, and Git marker via POST /api/setup/validate-folders.
+    /// </summary>
+    public virtual async Task<List<FolderValidationResult>> ValidateFoldersAsync(
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new ValidateFoldersRequest { Paths = paths.ToList() };
+        var jsonPayload = JsonSerializer.Serialize(req, JsonOptions);
+        var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/validate-folders", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new List<FolderValidationResult>();
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<List<FolderValidationResult>>(json, JsonOptions)
+               ?? new List<FolderValidationResult>();
+    }
+
+    /// <summary>
     /// Fetch partial wizard progress from GET /api/setup/wizard-progress.
     /// </summary>
     public virtual async Task<WizardProgressState> GetWizardProgressAsync(CancellationToken cancellationToken = default)

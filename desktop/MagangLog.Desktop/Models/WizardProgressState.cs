@@ -14,6 +14,9 @@ public class WizardProgressState
     [JsonPropertyName("completed_steps")]
     public List<int> CompletedSteps { get; set; } = new();
 
+    [JsonPropertyName("project_folders")]
+    public List<string> ProjectFolders { get; set; } = new();
+
     [JsonPropertyName("step_data")]
     public Dictionary<string, object?> StepData { get; set; } = new();
 
