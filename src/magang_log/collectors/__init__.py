@@ -23,6 +23,14 @@ from .privacy import (
     sanitize_evidence,
 )
 from .recent import RecentItemsScanner, parse_lnk, sanitize_path
+from .session_log import (
+    ApplicationSessionLogParser,
+    SessionLogCollector,
+    SessionLogParser,
+    parse_log_content,
+    resolve_log_files,
+    sanitize_log_detail,
+)
 from .strength import (
     StrengthEvaluationResult,
     build_drafting_payload,
@@ -32,6 +40,7 @@ from .strength import (
 )
 
 __all__ = [
+    "ApplicationSessionLogParser",
     "BrowserHistoryCollector",
     "Collector",
     "CollectorFailure",
@@ -45,6 +54,8 @@ __all__ = [
     "PrivacyConfig",
     "PrivacyFilter",
     "RecentItemsScanner",
+    "SessionLogCollector",
+    "SessionLogParser",
     "SourceConfig",
     "StrengthEvaluationResult",
     "build_drafting_payload",
@@ -54,8 +65,11 @@ __all__ = [
     "is_source_enabled_for_llm",
     "is_domain_allowed",
     "parse_lnk",
+    "parse_log_content",
+    "resolve_log_files",
     "run_collectors",
     "sanitize_evidence",
+    "sanitize_log_detail",
     "sanitize_path",
     "sanitize_url",
 ]
