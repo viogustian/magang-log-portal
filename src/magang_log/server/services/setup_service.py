@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import packaging.specifiers
+import packaging.version
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from ...settings import AppConfig, find_repo_root, sync_work_profile_browser_domains
 from ...workprofile import WorkProfile, load_presets
@@ -23,6 +32,456 @@ from ...workprofile import WorkProfile, load_presets
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+class InstallationGuidance(BaseModel):
+    """Windows-specific installation and troubleshooting steps for requirements."""
+
+    download_url: str
+    install_steps: list[str]
+    verification_command: str
+    expected_output: str
+    troubleshooting: list[str]
+
+
+class RequirementItem(BaseModel):
+    """System requirement state, minimum required version, and installation guidance."""
+
+    name: str
+    min_version: str
+    installed_version: str | None = None
+    status: Literal["ok", "version_mismatch", "missing"]
+    guidance: InstallationGuidance
+
+
+class FolderValidationResult(BaseModel):
+    """Validation report for a single workspace folder path."""
+
+    path: str
+    exists: bool
+    readable: bool
+    is_git: bool
+    error: str | None = None
+
+
+class WizardProgressState(BaseModel):
+    """Persistent state representation of SetupWizard progression."""
+
+    current_step: int = 0
+    completed_steps: list[int] = Field(default_factory=list)
+    step_data: dict[str, Any] = Field(default_factory=dict)
+
+
+WINDOWS_REQUIREMENTS_GUIDANCE: dict[str, dict[str, Any]] = {
+    "Python": {
+        "download_url": "https://www.python.org/downloads/windows/",
+        "install_steps": [
+            "Unduh installer Python 64-bit untuk Windows dari tautan resmi.",
+            "Jalankan installer dan pastikan opsi 'Add python.exe to PATH' dicentang sebelum klik Install Now.",
+            "Selesaikan proses instalasi dan klik 'Disable path length limit' jika diminta.",
+        ],
+        "verification_command": "python --version",
+        "expected_output": "Python >= 3.12",
+        "troubleshooting": [
+            "Jika perintah 'python' tidak dikenali di terminal, tutup dan buka ulang terminal/PowerShell.",
+            "Periksa System Environment Variables dan pastikan path Python dan Scripts ada di PATH pengguna.",
+        ],
+    },
+    "Playwright": {
+        "download_url": "https://playwright.dev/python/docs/intro",
+        "install_steps": [
+            "Pastikan virtual environment aktif: .\\.venv\\Scripts\\Activate.ps1",
+            "Instal paket Playwright: pip install playwright",
+            "Unduh binary browser Chromium: playwright install chromium",
+        ],
+        "verification_command": "playwright --version",
+        "expected_output": "Version 1.40+",
+        "troubleshooting": [
+            "Pastikan binary browser terinstal dengan menjalankan 'playwright install chromium'.",
+            "Jika terjadi error PowerShell script execution policy, jalankan 'Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser'.",
+        ],
+    },
+    ".NET SDK": {
+        "download_url": "https://dotnet.microsoft.com/download/dotnet/8.0",
+        "install_steps": [
+            "Unduh .NET SDK 8.0+ Windows x64 Installer.",
+            "Jalankan installer hingga selesai.",
+        ],
+        "verification_command": "dotnet --version",
+        "expected_output": "8.0.x",
+        "troubleshooting": [
+            "Pastikan dotnet ada di System PATH atau restart terminal Anda.",
+        ],
+    },
+    "Git": {
+        "download_url": "https://git-scm.com/download/win",
+        "install_steps": [
+            "Unduh Git for Windows 64-bit installer.",
+            "Jalankan installer dengan konfigurasi default (pilih 'Git from the command line and also from 3rd-party software').",
+        ],
+        "verification_command": "git --version",
+        "expected_output": "git version 2.x",
+        "troubleshooting": [
+            "Tutup dan buka kembali terminal agar PATH Git terbarui.",
+        ],
+    },
+}
+
+
+def get_guidance_for(name: str) -> InstallationGuidance:
+    """Retrieve Windows installation guidance for requirement with fallback."""
+    if name in WINDOWS_REQUIREMENTS_GUIDANCE:
+        return InstallationGuidance(**WINDOWS_REQUIREMENTS_GUIDANCE[name])
+
+    clean = name.lower()
+    for k, v in WINDOWS_REQUIREMENTS_GUIDANCE.items():
+        if k.lower() == clean:
+            return InstallationGuidance(**v)
+
+    return InstallationGuidance(
+        download_url=f"https://pypi.org/project/{name.lower()}/",
+        install_steps=[f"Pastikan virtual environment aktif, lalu jalankan: pip install {name}"],
+        verification_command=f"python -m pip show {name}",
+        expected_output=f"Name: {name}",
+        troubleshooting=[
+            "Pastikan pip dan setuptools terinstal ke versi terbaru.",
+            "Periksa koneksi internet jika instalasi gagal mengunduh wheel.",
+        ],
+    )
+
+
+def get_installed_version(name: str) -> str | None:
+    """Retrieve installed version of a tool/runtime or package on the host system."""
+    clean_name = name.strip()
+    norm = clean_name.lower()
+
+    if norm in ("python", "python3"):
+        return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+    if norm in ("git",):
+        git_bin = shutil.which("git")
+        if not git_bin:
+            return None
+        try:
+            res = subprocess.run(
+                [git_bin, "--version"], capture_output=True, text=True, check=False, timeout=5
+            )
+            if res.returncode == 0:
+                m = re.search(r"(\d+(\.\d+)+)", res.stdout)
+                if m:
+                    return m.group(1)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Failed checking git version: %s", exc)
+            return None
+        return None
+
+    if norm in (".net sdk", "dotnet", ".net"):
+        dotnet_bin = shutil.which("dotnet")
+        if not dotnet_bin:
+            return None
+        try:
+            res = subprocess.run(
+                [dotnet_bin, "--version"], capture_output=True, text=True, check=False, timeout=5
+            )
+            if res.returncode == 0:
+                m = re.search(r"(\d+(\.\d+)+)", res.stdout)
+                if m:
+                    return m.group(1)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Failed checking dotnet version: %s", exc)
+            return None
+        return None
+
+    if "playwright" in norm:
+        try:
+            return importlib.metadata.version("playwright")
+        except (importlib.metadata.PackageNotFoundError, ValueError):
+            pass
+        playwright_bin = shutil.which("playwright")
+        if playwright_bin:
+            try:
+                res = subprocess.run(
+                    [playwright_bin, "--version"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                )
+                if res.returncode == 0:
+                    m = re.search(r"(\d+(\.\d+)+)", res.stdout)
+                    if m:
+                        return m.group(1)
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.debug("Failed running playwright CLI: %s", exc)
+        return None
+
+    # Python package metadata lookup
+    try:
+        return importlib.metadata.version(norm)
+    except (importlib.metadata.PackageNotFoundError, ValueError):
+        pass
+
+    bin_path = shutil.which(norm)
+    if bin_path:
+        try:
+            res = subprocess.run(
+                [bin_path, "--version"], capture_output=True, text=True, check=False, timeout=5
+            )
+            if res.returncode == 0:
+                m = re.search(r"(\d+(\.\d+)+)", res.stdout or res.stderr)
+                if m:
+                    return m.group(1)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug("Failed running %s --version: %s", norm, exc)
+
+    return None
+
+
+def check_requirement_status(
+    min_version_spec: str,
+    installed_version_str: str | None,
+) -> Literal["ok", "version_mismatch", "missing"]:
+    """Compare installed version against required version specifier."""
+    if not installed_version_str:
+        return "missing"
+
+    try:
+        v_match = re.search(r"\d+(\.\d+)+", installed_version_str)
+        if not v_match:
+            return "version_mismatch"
+        parsed_installed = packaging.version.parse(v_match.group(0))
+    except (packaging.version.InvalidVersion, ValueError, TypeError):
+        return "version_mismatch"
+
+    clean_spec = min_version_spec.strip()
+    if clean_spec.startswith((">=", "<=", "==", ">", "<", "!=")):
+        spec_str = clean_spec
+    elif clean_spec:
+        spec_str = f">={clean_spec}"
+    else:
+        return "ok"
+
+    try:
+        spec = packaging.specifiers.SpecifierSet(spec_str)
+        if parsed_installed in spec:
+            return "ok"
+        return "version_mismatch"
+    except (packaging.specifiers.InvalidSpecifier, ValueError):
+        try:
+            target_v = packaging.version.parse(clean_spec.lstrip(">=< "))
+            if parsed_installed >= target_v:
+                return "ok"
+            return "version_mismatch"
+        except (packaging.version.InvalidVersion, ValueError):
+            return "ok"
+
+
+def scan_system_requirements(root_path: Path | str | None = None) -> list[RequirementItem]:
+    """Dynamically parse repository files and inspect host system runtime requirements."""
+    root = Path(root_path).resolve() if root_path else find_repo_root()
+    pyproject_file = root / "pyproject.toml"
+
+    requirements_to_check: list[tuple[str, str]] = []
+
+    if pyproject_file.exists():
+        try:
+            data = tomllib.loads(pyproject_file.read_text(encoding="utf-8"))
+            project_section = data.get("project", {})
+
+            # 1. Python version requirement
+            req_python = project_section.get("requires-python")
+            if req_python:
+                requirements_to_check.append(("Python", req_python))
+
+            # 2. Dependencies
+            deps = project_section.get("dependencies", [])
+            for dep in deps:
+                m = re.match(r"^([a-zA-Z0-9_\-]+)(.*)$", dep.strip())
+                if m:
+                    dep_name, dep_spec = m.group(1), m.group(2).strip()
+                    if dep_name.lower() == "playwright":
+                        requirements_to_check.append(("Playwright", dep_spec or ">=1.40"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed parsing pyproject.toml for requirements: %s", exc)
+
+    # Check for .python-version
+    python_version_file = root / ".python-version"
+    if python_version_file.exists():
+        try:
+            v_str = python_version_file.read_text(encoding="utf-8").strip()
+            if v_str and not any(r[0] == "Python" for r in requirements_to_check):
+                requirements_to_check.append(("Python", f">={v_str}"))
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("Failed reading .python-version: %s", exc)
+
+    # Fallback requirement definitions if not found
+    if not any(r[0] == "Python" for r in requirements_to_check):
+        requirements_to_check.append(("Python", ">=3.12"))
+
+    if not any(r[0] == "Playwright" for r in requirements_to_check):
+        requirements_to_check.append(("Playwright", ">=1.40"))
+
+    has_dotnet = (
+        (root / "desktop").exists()
+        or (root / "global.json").exists()
+        or any(root.glob("*.csproj"))
+        or any(root.glob("*.sln"))
+    )
+    if has_dotnet:
+        requirements_to_check.append((".NET SDK", ">=8.0"))
+
+    results: list[RequirementItem] = []
+    for req_name, min_v in requirements_to_check:
+        installed_v = get_installed_version(req_name)
+        status = check_requirement_status(min_v, installed_v)
+        guidance = get_guidance_for(req_name)
+        results.append(
+            RequirementItem(
+                name=req_name,
+                min_version=min_v,
+                installed_version=installed_v,
+                status=status,
+                guidance=guidance,
+            )
+        )
+
+    return results
+
+
+def recheck_system_requirement(name: str, root_path: Path | str | None = None) -> RequirementItem:
+    """Isolate and re-evaluate a single system requirement by name."""
+    clean_name = name.strip()
+    all_reqs = scan_system_requirements(root_path=root_path)
+    for item in all_reqs:
+        if item.name.lower() == clean_name.lower():
+            return item
+
+    for known_name, guidance_data in WINDOWS_REQUIREMENTS_GUIDANCE.items():
+        if known_name.lower() == clean_name.lower():
+            installed_v = get_installed_version(known_name)
+            status = check_requirement_status("", installed_v)
+            return RequirementItem(
+                name=known_name,
+                min_version=">=1.0",
+                installed_version=installed_v,
+                status=status,
+                guidance=InstallationGuidance(**guidance_data),
+            )
+
+    raise ValueError(f"Requirement '{name}' not found in project specification.")
+
+
+def validate_folder_paths(paths: list[str]) -> list[FolderValidationResult]:
+    """Validate directory paths for existence, readability, and Git marker."""
+    results: list[FolderValidationResult] = []
+    for raw_path in paths:
+        clean = (raw_path or "").strip()
+        p = Path(clean).expanduser().resolve()
+        if not p.exists():
+            results.append(
+                FolderValidationResult(
+                    path=str(p),
+                    exists=False,
+                    readable=False,
+                    is_git=False,
+                    error="Folder tidak ditemukan",
+                )
+            )
+            continue
+
+        if not p.is_dir():
+            results.append(
+                FolderValidationResult(
+                    path=str(p),
+                    exists=False,
+                    readable=False,
+                    is_git=False,
+                    error="Path bukan direktori",
+                )
+            )
+            continue
+
+        readable = True
+        try:
+            list(p.iterdir())
+        except (PermissionError, OSError):
+            readable = False
+
+        if not readable:
+            results.append(
+                FolderValidationResult(
+                    path=str(p),
+                    exists=True,
+                    readable=False,
+                    is_git=False,
+                    error="Tidak ada izin baca",
+                )
+            )
+            continue
+
+        git_marker = p / ".git"
+        is_git = git_marker.exists()
+        results.append(
+            FolderValidationResult(
+                path=str(p),
+                exists=True,
+                readable=True,
+                is_git=is_git,
+                error=None,
+            )
+        )
+
+    return results
+
+
+def get_wizard_progress_path(root_path: Path | None = None) -> Path:
+    """Return the canonical path to config/wizard-progress.yaml."""
+    root = root_path or find_repo_root()
+    return (root / "config" / "wizard-progress.yaml").resolve()
+
+
+def load_wizard_progress(target_path: Path | str | None = None) -> WizardProgressState:
+    """Load partial wizard progress state from disk or return default initial state."""
+    path = Path(target_path).resolve() if target_path else get_wizard_progress_path()
+    if not path.exists():
+        return WizardProgressState(current_step=0, completed_steps=[], step_data={})
+
+    try:
+        content = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(content) or {}
+        if isinstance(data, dict):
+            return WizardProgressState.model_validate(data)
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        logger.warning("Could not read wizard progress from %s: %s", path, exc)
+
+    return WizardProgressState(current_step=0, completed_steps=[], step_data={})
+
+
+def save_wizard_progress(
+    state: WizardProgressState | dict[str, Any],
+    target_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Atomically persist partial wizard progress state to disk."""
+    path = Path(target_path).resolve() if target_path else get_wizard_progress_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(state, dict):
+        validated = WizardProgressState.model_validate(state)
+    else:
+        validated = state
+
+    data_dict = validated.model_dump(mode="python")
+    cleaned_dict = _clean_paths_for_yaml(data_dict)
+    yaml_text = yaml.safe_dump(cleaned_dict, sort_keys=False, allow_unicode=True)
+
+    temp_target = path.with_suffix(".tmp")
+    temp_target.write_text(yaml_text, encoding="utf-8")
+    os.replace(temp_target, path)
+
+    saved_time = datetime.now(timezone.utc).isoformat()
+    logger.info("Wizard progress saved to %s at %s", path, saved_time)
+    return {"success": True, "saved_at": saved_time}
+
 
 
 class PredictProfileResponse(BaseModel):
@@ -269,6 +728,15 @@ def save_app_configuration(
     temp_target = target.with_suffix(".tmp")
     temp_target.write_text(yaml_text, encoding="utf-8")
     os.replace(temp_target, target)
+
+    # Clean up wizard progress file if present after final save
+    try:
+        progress_path = get_wizard_progress_path()
+        if progress_path.exists():
+            progress_path.unlink()
+            logger.info("Cleaned up wizard progress file at %s", progress_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to clean up wizard progress file: %s", exc)
 
     saved_time = datetime.now(timezone.utc).isoformat()
     logger.info("Configuration successfully saved to %s at %s", target, saved_time)

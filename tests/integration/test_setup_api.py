@@ -223,3 +223,171 @@ def test_register_scheduler_endpoint_failure_500(client: TestClient) -> None:
         )
         assert response.status_code == 500
         assert "Administrative privilege required" in response.json()["detail"]
+
+
+def test_get_requirements_scanning_and_payload_structure(client: TestClient) -> None:
+    response = client.get("/api/setup/requirements")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) >= 2
+
+    req_names = [item["name"] for item in data]
+    assert "Python" in req_names
+    assert "Playwright" in req_names
+
+    for item in data:
+        assert "name" in item
+        assert "min_version" in item
+        assert item["status"] in ("ok", "version_mismatch", "missing")
+        assert "guidance" in item
+        guidance = item["guidance"]
+        assert isinstance(guidance, dict)
+        assert "download_url" in guidance and guidance["download_url"].startswith("http")
+        assert "install_steps" in guidance and isinstance(guidance["install_steps"], list)
+        assert "verification_command" in guidance
+        assert "expected_output" in guidance
+        assert "troubleshooting" in guidance and isinstance(guidance["troubleshooting"], list)
+
+
+def test_recheck_requirement_endpoint_success(client: TestClient) -> None:
+    response = client.post("/api/setup/recheck-requirement", json={"name": "Python"})
+    assert response.status_code == 200
+    item = response.json()
+    assert item["name"] == "Python"
+    assert item["status"] == "ok"
+    assert item["installed_version"] is not None
+    assert item["guidance"]["verification_command"] == "python --version"
+
+
+def test_recheck_requirement_endpoint_not_found(client: TestClient) -> None:
+    response = client.post(
+        "/api/setup/recheck-requirement", json={"name": "NonExistentTool123"}
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_recheck_requirement_mock_mismatch_and_missing(client: TestClient) -> None:
+    with patch(
+        "magang_log.server.services.setup_service.get_installed_version",
+        return_value="3.8.0",
+    ):
+        response = client.post("/api/setup/recheck-requirement", json={"name": "Python"})
+        assert response.status_code == 200
+        item = response.json()
+        assert item["status"] == "version_mismatch"
+        assert item["installed_version"] == "3.8.0"
+
+    with patch(
+        "magang_log.server.services.setup_service.get_installed_version",
+        return_value=None,
+    ):
+        response = client.post("/api/setup/recheck-requirement", json={"name": "Python"})
+        assert response.status_code == 200
+        item = response.json()
+        assert item["status"] == "missing"
+        assert item["installed_version"] is None
+
+
+def test_validate_folders_endpoint(client: TestClient, tmp_path: Path) -> None:
+    git_dir = tmp_path / "my_project_git"
+    git_dir.mkdir()
+    (git_dir / ".git").mkdir()
+
+    non_git_dir = tmp_path / "notes_folder"
+    non_git_dir.mkdir()
+
+    missing_dir = tmp_path / "does_not_exist"
+
+    payload = {
+        "paths": [str(git_dir), str(non_git_dir), str(missing_dir)],
+    }
+    response = client.post("/api/setup/validate-folders", json=payload)
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 3
+
+    r_git = next(r for r in results if r["path"] == str(git_dir.resolve()))
+    assert r_git["exists"] is True
+    assert r_git["readable"] is True
+    assert r_git["is_git"] is True
+    assert r_git["error"] is None
+
+    r_non_git = next(r for r in results if r["path"] == str(non_git_dir.resolve()))
+    assert r_non_git["exists"] is True
+    assert r_non_git["readable"] is True
+    assert r_non_git["is_git"] is False
+    assert r_non_git["error"] is None
+
+    r_missing = next(r for r in results if r["path"] == str(missing_dir.resolve()))
+    assert r_missing["exists"] is False
+    assert r_missing["readable"] is False
+    assert r_missing["is_git"] is False
+    assert "tidak ditemukan" in r_missing["error"].lower()
+
+
+def test_wizard_progress_endpoints(client: TestClient, tmp_path: Path) -> None:
+    progress_file = tmp_path / "wizard-progress.yaml"
+
+    with patch(
+        "magang_log.server.services.setup_service.get_wizard_progress_path",
+        return_value=progress_file,
+    ):
+        # 1. Initial read should return default 0 state
+        get_res = client.get("/api/setup/wizard-progress")
+        assert get_res.status_code == 200
+        state = get_res.json()
+        assert state["current_step"] == 0
+        assert state["completed_steps"] == []
+        assert state["step_data"] == {}
+
+        # 2. Save progress
+        save_payload = {
+            "current_step": 2,
+            "completed_steps": [0, 1],
+            "step_data": {
+                "folders": [str(tmp_path)],
+                "git_intensity": "sering",
+            },
+        }
+        post_res = client.post("/api/setup/save-progress", json=save_payload)
+        assert post_res.status_code == 200
+        data = post_res.json()
+        assert data["success"] is True
+        assert "saved_at" in data
+
+        # 3. Read again to confirm persistence
+        get_res2 = client.get("/api/setup/wizard-progress")
+        assert get_res2.status_code == 200
+        state2 = get_res2.json()
+        assert state2["current_step"] == 2
+        assert state2["completed_steps"] == [0, 1]
+        assert state2["step_data"]["git_intensity"] == "sering"
+
+
+def test_save_config_cleans_up_wizard_progress(
+    client: TestClient, tmp_path: Path
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    target_config = config_dir / "config.yaml"
+    progress_file = config_dir / "wizard-progress.yaml"
+    progress_file.write_text("current_step: 4\n", encoding="utf-8")
+    assert progress_file.exists()
+
+    payload = {
+        "timezone": "Asia/Jakarta",
+        "config_path": str(target_config),
+    }
+
+    with patch(
+        "magang_log.server.services.setup_service.get_wizard_progress_path",
+        return_value=progress_file,
+    ):
+        response = client.post("/api/setup/save", json=payload)
+        assert response.status_code == 200
+        assert target_config.exists()
+        # wizard-progress.yaml should be removed after final save
+        assert not progress_file.exists()
+
