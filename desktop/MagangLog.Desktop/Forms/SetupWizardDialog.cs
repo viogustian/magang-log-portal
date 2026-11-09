@@ -16,6 +16,7 @@ public class SetupWizardDialog : Form
     private readonly Panel[] _stepPanels;
     private readonly RequirementListPanel _requirementPanel;
     private readonly FolderListPanel _folderPanel;
+    private readonly JobRolePanel _rolePanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
@@ -32,6 +33,7 @@ public class SetupWizardDialog : Form
     public StepIndicatorPanel StepIndicator => _indicator;
     public RequirementListPanel RequirementPanel => _requirementPanel;
     public FolderListPanel FolderPanel => _folderPanel;
+    public JobRolePanel RolePanel => _rolePanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -135,6 +137,12 @@ public class SetupWizardDialog : Form
         _stepPanels[1].Controls.Add(_folderPanel);
         _folderPanel.BringToFront();
 
+        // Initialize and host JobRolePanel in Step 2
+        _rolePanel = new JobRolePanel(_apiClient);
+        _rolePanel.GateStateChanged += (_, _) => EvaluateGateState();
+        _stepPanels[2].Controls.Add(_rolePanel);
+        _rolePanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -145,6 +153,7 @@ public class SetupWizardDialog : Form
     {
         base.OnLoad(e);
         await LoadProgressAsync();
+        _ = _rolePanel.LoadPresetsAsync();
         if (_currentStep == 0)
         {
             await _requirementPanel.LoadRequirementsAsync();
@@ -198,6 +207,12 @@ public class SetupWizardDialog : Form
         if (state.ProjectFolders != null && state.ProjectFolders.Count > 0)
         {
             _ = _folderPanel.LoadFoldersAsync(state.ProjectFolders);
+        }
+
+        if (!string.IsNullOrEmpty(state.ProfileName) || (state.Keywords != null && state.Keywords.Count > 0))
+        {
+            _rolePanel.Description = state.RoleDescription;
+            _rolePanel.KeywordPanel.SetProfile(state.ProfileName, state.Keywords ?? new List<string>());
         }
 
         var stepToActivate = Math.Clamp(state.CurrentStep, 0, StepCount - 1);
@@ -261,6 +276,22 @@ public class SetupWizardDialog : Form
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
+        else if (_currentStep == 2)
+        {
+            if (_rolePanel == null || _rolePanel.HasValidProfile)
+            {
+                _btnNext.Enabled = true;
+                var count = _rolePanel?.KeywordPanel.Keywords.Count ?? 0;
+                _lblStatus.Text = $"Profil '{_rolePanel?.KeywordPanel.ProfileName}' siap ({count} kata kunci).";
+                _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _btnNext.Enabled = false;
+                _lblStatus.Text = "Masukkan nama profil dan minimal satu kata kunci aplikasi untuk melanjutkan.";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+        }
         else
         {
             _btnNext.Enabled = true;
@@ -288,6 +319,15 @@ public class SetupWizardDialog : Form
         {
             State.ProjectFolders = _folderPanel.GetValidFolderPaths();
             State.SetStepData("project_folders", State.ProjectFolders);
+        }
+        else if (_currentStep == 2)
+        {
+            State.RoleDescription = _rolePanel.Description;
+            State.ProfileName = _rolePanel.KeywordPanel.ProfileName;
+            State.Keywords = _rolePanel.KeywordPanel.Keywords.ToList();
+            State.SetStepData("role_description", State.RoleDescription);
+            State.SetStepData("profile_name", State.ProfileName);
+            State.SetStepData("keywords", State.Keywords);
         }
 
         if (_currentStep >= StepCount - 1)

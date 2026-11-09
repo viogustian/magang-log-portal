@@ -90,6 +90,54 @@ public class BackendApiClient
     }
 
     /// <summary>
+    /// Predicts tailored WorkProfile and keywords from natural language description via POST /api/setup/predict-profile.
+    /// </summary>
+    public virtual async Task<PredictProfileResponse?> PredictProfileAsync(
+        string description,
+        string apiKey = "",
+        CancellationToken cancellationToken = default)
+    {
+        var req = new PredictProfileRequest
+        {
+            Description = description,
+            ApiKey = apiKey
+        };
+        var jsonPayload = JsonSerializer.Serialize(req, JsonOptions);
+        var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/predict-profile", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<PredictProfileResponse>(json, JsonOptions);
+    }
+
+    /// <summary>
+    /// Fetches standard offline WorkProfile presets via GET /api/setup/presets.
+    /// </summary>
+    public virtual async Task<List<WorkProfile>> GetPresetsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/setup/presets", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new List<WorkProfile>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<List<WorkProfile>>(json, JsonOptions) ?? new List<WorkProfile>();
+        }
+        catch (Exception)
+        {
+            return new List<WorkProfile>();
+        }
+    }
+
+    /// <summary>
     /// Fetch partial wizard progress from GET /api/setup/wizard-progress.
     /// </summary>
     public virtual async Task<WizardProgressState> GetWizardProgressAsync(CancellationToken cancellationToken = default)

@@ -31,3 +31,4 @@ public class ValidateFoldersRequest
     [JsonPropertyName("paths")]
     public List<string> Paths { get; set; } = new();
 }
+
