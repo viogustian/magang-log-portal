@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel
 
+from ...settings import AppConfig, find_repo_root, sync_work_profile_browser_domains
 from ...workprofile import WorkProfile, load_presets
 
 logger = logging.getLogger(__name__)
@@ -192,3 +199,128 @@ def predict_work_profile(
 
     fallback_profile = find_closest_preset(description)
     return PredictProfileResponse(source="preset_fallback", profile=fallback_profile)
+
+
+def scan_workspace_repos(root_path: str | Path, only_git: bool = True) -> list[dict[str, Any]]:
+    """Scan child directories in root_path for Git repositories."""
+    p = Path(root_path).resolve()
+    if not p.exists() or not p.is_dir():
+        raise FileNotFoundError(f"Root path '{root_path}' does not exist or is not a directory.")
+
+    results: list[dict[str, Any]] = []
+    try:
+        children = sorted(p.iterdir(), key=lambda c: c.name.lower())
+    except OSError as exc:
+        raise PermissionError(f"Cannot access directory '{root_path}': {exc}") from exc
+
+    for child in children:
+        if child.is_dir():
+            git_marker = child / ".git"
+            is_git = git_marker.exists()
+            if only_git and not is_git:
+                continue
+            results.append({
+                "name": child.name,
+                "path": str(child.resolve()),
+                "is_git": is_git,
+            })
+
+    return results
+
+
+def _clean_paths_for_yaml(val: Any) -> Any:
+    """Recursively convert Path objects to strings for YAML serialization."""
+    if isinstance(val, dict):
+        return {k: _clean_paths_for_yaml(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_clean_paths_for_yaml(v) for v in val]
+    if isinstance(val, Path):
+        return str(val)
+    return val
+
+
+def save_app_configuration(
+    config: AppConfig | dict[str, Any],
+    target_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Atomically save validated configuration to config.yaml."""
+    if target_path is None:
+        root = find_repo_root()
+        target = (root / "config" / "config.yaml").resolve()
+    else:
+        target = Path(target_path).resolve()
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(config, dict):
+        validated = AppConfig.model_validate(config)
+    else:
+        validated = config
+
+    # Synchronize browser domains if a work profile is present
+    sync_work_profile_browser_domains(validated)
+
+    data_dict = validated.model_dump(mode="python")
+    cleaned_dict = _clean_paths_for_yaml(data_dict)
+
+    yaml_text = yaml.safe_dump(cleaned_dict, sort_keys=False, allow_unicode=True)
+
+    # Atomic write via temporary file
+    temp_target = target.with_suffix(".tmp")
+    temp_target.write_text(yaml_text, encoding="utf-8")
+    os.replace(temp_target, target)
+
+    saved_time = datetime.now(timezone.utc).isoformat()
+    logger.info("Configuration successfully saved to %s at %s", target, saved_time)
+    return {"success": True, "saved_at": saved_time}
+
+
+def register_task_scheduler(
+    trigger_time: str,
+    task_prefix: str = "MagangLog",
+    root_path: Path | None = None,
+) -> dict[str, Any]:
+    """Register daily execution task via Windows Task Scheduler."""
+    clean_time = trigger_time.strip()
+    if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", clean_time):
+        raise ValueError("Invalid trigger_time format. Expected HH:MM (e.g. '17:00').")
+
+    root = root_path or find_repo_root()
+    script_candidates = [
+        root / "scripts" / "register_scheduler.ps1",
+        root / "scripts" / "install_task.ps1",
+    ]
+    script_path = next((p for p in script_candidates if p.exists()), script_candidates[-1])
+
+    ps_bin = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+
+    cmd = [
+        ps_bin,
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script_path),
+        "-Install",
+        "-ReviewTime",
+        clean_time,
+        "-TaskPrefix",
+        task_prefix,
+    ]
+
+    res = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    if res.returncode != 0:
+        err = res.stderr.strip() or res.stdout.strip() or f"Process exited with code {res.returncode}"
+        raise RuntimeError(f"Task Scheduler registration failed: {err}")
+
+    task_name = f"{task_prefix}-Review"
+    logger.info("Task Scheduler registered successfully: %s at %s", task_name, clean_time)
+    return {"success": True, "task_name": task_name}

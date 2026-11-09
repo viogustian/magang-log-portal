@@ -1,6 +1,7 @@
 """Integration tests for SetupWizard API endpoints (/api/setup/*)."""
 
 import urllib.error
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -117,3 +118,105 @@ def test_predict_profile_fallback_to_preset(client: TestClient) -> None:
     data = response.json()
     assert data["source"] == "preset_fallback"
     assert data["profile"]["profile_name"] == "UI/UX Designer"
+
+
+def test_scan_repos_endpoint(client: TestClient, tmp_path: Path) -> None:
+    workspace = tmp_path / "repos"
+    workspace.mkdir()
+    repo1 = workspace / "frontend_app"
+    repo1.mkdir()
+    (repo1 / ".git").mkdir()
+
+    repo2 = workspace / "backend_api"
+    repo2.mkdir()
+    (repo2 / ".git").mkdir()
+
+    response = client.post("/api/setup/scan-repos", json={"root_path": str(workspace)})
+    assert response.status_code == 200
+    repos = response.json()
+    assert len(repos) == 2
+    names = {r["name"] for r in repos}
+    assert names == {"frontend_app", "backend_api"}
+    assert all(r["is_git"] is True for r in repos)
+
+
+def test_scan_repos_endpoint_not_found(client: TestClient) -> None:
+    response = client.post(
+        "/api/setup/scan-repos", json={"root_path": "invalid_dir_path_does_not_exist"}
+    )
+    assert response.status_code == 404
+
+
+def test_save_config_endpoint_success(
+    client: TestClient, tmp_path: Path
+) -> None:
+    tmp_dir = tmp_path / "config_test"
+    tmp_dir.mkdir()
+    target_config = tmp_dir / "config.yaml"
+
+    payload = {
+        "timezone": "Asia/Makassar",
+        "workdays": ["mon", "tue", "wed"],
+        "portal": {"headless": False},
+        "config_path": str(target_config),
+    }
+
+    response = client.post("/api/setup/save", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert "saved_at" in data
+
+    assert target_config.exists()
+    saved_text = target_config.read_text(encoding="utf-8")
+    assert "Asia/Makassar" in saved_text
+
+
+def test_save_config_endpoint_validation_error(client: TestClient) -> None:
+    # Invalid workday "holiday_day" should fail Pydantic validation (422)
+    payload = {
+        "workdays": ["invalid_day_name"],
+    }
+    response = client.post("/api/setup/save", json=payload)
+    assert response.status_code == 422
+
+
+def test_register_scheduler_endpoint_success(client: TestClient) -> None:
+    mock_res = MagicMock()
+    mock_res.returncode = 0
+    mock_res.stdout = "Installed"
+    mock_res.stderr = ""
+
+    with patch("subprocess.run", return_value=mock_res):
+        response = client.post(
+            "/api/setup/register-scheduler",
+            json={"trigger_time": "17:30", "task_prefix": "TestTask"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["task_name"] == "TestTask-Review"
+
+
+def test_register_scheduler_endpoint_invalid_time(client: TestClient) -> None:
+    response = client.post(
+        "/api/setup/register-scheduler",
+        json={"trigger_time": "25:99"},
+    )
+    assert response.status_code == 400
+    assert "HH:MM" in response.json()["detail"]
+
+
+def test_register_scheduler_endpoint_failure_500(client: TestClient) -> None:
+    mock_res = MagicMock()
+    mock_res.returncode = 1
+    mock_res.stdout = ""
+    mock_res.stderr = "Administrative privilege required"
+
+    with patch("subprocess.run", return_value=mock_res):
+        response = client.post(
+            "/api/setup/register-scheduler",
+            json={"trigger_time": "18:00"},
+        )
+        assert response.status_code == 500
+        assert "Administrative privilege required" in response.json()["detail"]
