@@ -172,10 +172,13 @@ def test_save_config_endpoint_success(
     assert "Asia/Makassar" in saved_text
 
 
-def test_save_config_endpoint_validation_error(client: TestClient) -> None:
+def test_save_config_endpoint_validation_error(
+    client: TestClient, tmp_path: Path
+) -> None:
     # Invalid workday "holiday_day" should fail Pydantic validation (422)
     payload = {
         "workdays": ["invalid_day_name"],
+        "config_path": str(tmp_path / "never_written.yaml"),
     }
     response = client.post("/api/setup/save", json=payload)
     assert response.status_code == 422
