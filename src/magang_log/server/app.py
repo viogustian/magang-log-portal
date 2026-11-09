@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .routers.health import router as health_router
+from .routers.portal import router as portal_router
 from .routers.setup import router as setup_router
 
 
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix="/api")
     app.include_router(setup_router, prefix="/api")
+    app.include_router(portal_router, prefix="/api")
 
     return app
 
