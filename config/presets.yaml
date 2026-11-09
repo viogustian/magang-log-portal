@@ -1,0 +1,155 @@
+# Bundled Offline WorkProfile Presets
+# Pustaka preset kanonikal profil kerja magang untuk penentuan software stack dan domain peramban tanpa koneksi internet.
+
+presets:
+  - profile_name: "Software Engineer"
+    natural_description: "Pengembangan perangkat lunak, pemrograman, debugging, dan version control Git."
+    applications:
+      - name: "Visual Studio Code"
+        process_names:
+          - "Code.exe"
+        file_extensions:
+          - ".py"
+          - ".ts"
+          - ".js"
+          - ".tsx"
+          - ".jsx"
+          - ".html"
+          - ".css"
+          - ".json"
+          - ".sql"
+          - ".sh"
+          - ".rs"
+          - ".go"
+          - ".java"
+          - ".cpp"
+          - ".c"
+          - ".md"
+        log_patterns: []
+      - name: "Git"
+        process_names:
+          - "git.exe"
+        file_extensions: []
+        log_patterns: []
+    browser_domains:
+      - "github.com"
+      - "gitlab.com"
+      - "stackoverflow.com"
+      - "developer.mozilla.org"
+    watch_folders: []
+
+  - profile_name: "UI/UX Designer"
+    natural_description: "Perancangan wireframe, user flow, visual design system, mockup, dan prototipe interaktif."
+    applications:
+      - name: "Figma"
+        process_names:
+          - "Figma.exe"
+        file_extensions:
+          - ".fig"
+        log_patterns: []
+      - name: "Adobe XD"
+        process_names:
+          - "XD.exe"
+        file_extensions:
+          - ".xd"
+          - ".sketch"
+        log_patterns: []
+    browser_domains:
+      - "figma.com"
+      - "dribbble.com"
+      - "behance.net"
+      - "mobbin.com"
+    watch_folders: []
+
+  - profile_name: "Data Analyst"
+    natural_description: "Pengolahan data bisnis, pemodelan tabel, analisis statistik, dan pembuatan dashboard interaktif."
+    applications:
+      - name: "Power BI Desktop"
+        process_names:
+          - "PBIDesktop.exe"
+        file_extensions:
+          - ".pbix"
+          - ".pbit"
+        log_patterns:
+          - "Microsoft/Power BI Desktop/User.log"
+      - name: "Microsoft Excel"
+        process_names:
+          - "EXCEL.EXE"
+        file_extensions:
+          - ".xlsx"
+          - ".xls"
+          - ".csv"
+        log_patterns: []
+      - name: "Tableau"
+        process_names:
+          - "tableau.exe"
+        file_extensions:
+          - ".twb"
+          - ".twbx"
+        log_patterns: []
+    browser_domains:
+      - "app.powerbi.com"
+      - "powerbi.com"
+      - "lookerstudio.google.com"
+      - "kaggle.com"
+    watch_folders: []
+
+  - profile_name: "Motion Designer"
+    natural_description: "Pembuatan animasi 2D/3D, motion graphic, video editing, compositing, dan rendering."
+    applications:
+      - name: "Adobe After Effects"
+        process_names:
+          - "AfterFX.exe"
+        file_extensions:
+          - ".aep"
+          - ".aet"
+        log_patterns: []
+      - name: "Adobe Premiere Pro"
+        process_names:
+          - "Adobe Premiere Pro.exe"
+        file_extensions:
+          - ".prproj"
+        log_patterns: []
+      - name: "Blender"
+        process_names:
+          - "blender.exe"
+        file_extensions:
+          - ".blend"
+        log_patterns: []
+    browser_domains:
+      - "behance.net"
+      - "artstation.com"
+      - "youtube.com"
+    watch_folders: []
+
+  - profile_name: "Office / Admin"
+    natural_description: "Administrasi perkantoran, pengetikan laporan, korespondensi resmi, kalkulasi lembar kerja, dan materi presentasi."
+    applications:
+      - name: "Microsoft Word"
+        process_names:
+          - "WINWORD.EXE"
+        file_extensions:
+          - ".docx"
+          - ".doc"
+        log_patterns: []
+      - name: "Microsoft Excel"
+        process_names:
+          - "EXCEL.EXE"
+        file_extensions:
+          - ".xlsx"
+          - ".xls"
+          - ".csv"
+        log_patterns: []
+      - name: "Microsoft PowerPoint"
+        process_names:
+          - "POWERPNT.EXE"
+        file_extensions:
+          - ".pptx"
+          - ".ppt"
+        log_patterns: []
+    browser_domains:
+      - "docs.google.com"
+      - "drive.google.com"
+      - "office.com"
+    watch_folders: []
+

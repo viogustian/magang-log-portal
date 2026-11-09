@@ -33,10 +33,19 @@ from .pipeline import (
     PipelineState,
     StateMachine,
 )
+from .workprofile import (
+    ApplicationConfig,
+    PresetError,
+    WorkProfile,
+    get_preset,
+    load_preset_map,
+    load_presets,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "ApplicationConfig",
     "CheckResult",
     "CheckStatus",
     "CliResult",
@@ -52,11 +61,13 @@ __all__ = [
     "PipelineCoordinator",
     "PipelineResult",
     "PipelineState",
+    "PresetError",
     "StateMachine",
     "Status",
     "StructuredLogEntry",
     "StructuredLogger",
     "WindowsToastNotifier",
+    "WorkProfile",
     "__version__",
     "clean_old_logs",
     "clean_old_run_artifacts",
@@ -67,6 +78,9 @@ __all__ = [
     "get_exit_code",
     "get_logger",
     "get_notifier",
+    "get_preset",
+    "load_preset_map",
+    "load_presets",
     "log_run_event",
     "send_system_notification",
 ]

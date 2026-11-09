@@ -10,10 +10,10 @@ from typing import Any, Literal, Protocol, Sequence, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
-EvidenceSource = Literal["git", "note", "browser", "activitywatch", "plugin"]
+EvidenceSource = Literal["git", "note", "browser", "activitywatch", "plugin", "app"]
 EvidenceStrength = Literal["strong", "weak"]
 
-VALID_SOURCES: set[str] = {"git", "note", "browser", "activitywatch", "plugin"}
+VALID_SOURCES: set[str] = {"git", "note", "browser", "activitywatch", "plugin", "app"}
 VALID_STRENGTHS: set[str] = {"strong", "weak"}
 
 SourceConfig = Any
@@ -38,7 +38,7 @@ class Evidence:
 
     Fields:
     - id: SHA1 hash 10 karakter deterministik
-    - source: sumber bukti ("git", "note", "browser", "activitywatch", "plugin")
+    - source: sumber bukti ("git", "note", "browser", "activitywatch", "plugin", "app")
     - kind: jenis detail ("commit", "note:kendala", "note:aktivitas", "note:pembelajaran", dll)
     - ts: timestamp UTC peristiwa
     - title: ringkasan atau subjek tersanitasi

@@ -105,3 +105,44 @@ def test_evidence_validation_source_and_strength() -> None:
             title="Judul",
             strength="medium",  # type: ignore[arg-type]
         )
+
+
+def test_evidence_source_app_accepted_and_computes_deterministic_id() -> None:
+    ts = datetime(2026, 10, 27, 14, 0, 0, tzinfo=timezone.utc)
+    ev = Evidence(
+        source="app",
+        kind="app:recent_file",
+        ts=ts,
+        title="Figma - UI_Dashboard.fig",
+        detail="Project file opened from ~/Documents/UI_Dashboard.fig",
+        strength="weak",
+    )
+
+    assert ev.source == "app"
+    assert ev.kind == "app:recent_file"
+    assert ev.strength == "weak"
+    assert len(ev.id) == 10
+    assert all(c in "0123456789abcdef" for c in ev.id)
+    assert ev.work_date == ts.date()
+
+    # Deterministic SHA1 computation for app source
+    expected_id = compute_evidence_id(
+        source="app",
+        kind="app:recent_file",
+        ts=ts,
+        title="Figma - UI_Dashboard.fig",
+    )
+    assert ev.id == expected_id
+
+    # Test strong app session log evidence
+    ev_strong = Evidence(
+        source="app",
+        kind="app:session_log",
+        ts=ts,
+        title="Power BI - SalesReport.pbix",
+        detail="Session active for 45 minutes",
+        strength="strong",
+    )
+    assert ev_strong.source == "app"
+    assert ev_strong.strength == "strong"
+
