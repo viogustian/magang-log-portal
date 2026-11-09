@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .app import AppActivityCollector, merge_app_evidence
 from .base import (
     Collector,
     CollectorFailure,
@@ -40,6 +41,7 @@ from .strength import (
 )
 
 __all__ = [
+    "AppActivityCollector",
     "ApplicationSessionLogParser",
     "BrowserHistoryCollector",
     "Collector",
@@ -64,6 +66,7 @@ __all__ = [
     "filter_evidence_for_llm",
     "is_source_enabled_for_llm",
     "is_domain_allowed",
+    "merge_app_evidence",
     "parse_lnk",
     "parse_log_content",
     "resolve_log_files",

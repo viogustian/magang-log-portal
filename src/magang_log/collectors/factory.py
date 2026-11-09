@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..settings import AppConfig, find_repo_root
 from ..store import LedgerStore
+from .app import AppActivityCollector
 from .base import Collector, Evidence, run_collectors
 from .browser import BrowserHistoryCollector
 from .git import GitCollector
@@ -48,6 +49,17 @@ def create_collectors(config: AppConfig, store: LedgerStore) -> list[Collector]:
                 allowlist=browser_cfg.get_allowlist(),
             )
         )
+
+    # 4. AppActivity Collector (Desktop Applications)
+    if hasattr(config.sources, "app") and config.sources.app.enabled:
+        work_profile = config.sources.app.work_profile or getattr(config, "work_profile", None)
+        if work_profile is not None:
+            collectors.append(
+                AppActivityCollector(
+                    work_profile=work_profile,
+                    recent_dir=config.sources.app.get_recent_dir(),
+                )
+            )
 
     return collectors
 

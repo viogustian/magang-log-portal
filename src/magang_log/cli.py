@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import os
 import statistics
 import sys
@@ -18,7 +19,15 @@ from .collectors.strength import build_drafting_payload, evaluate_evidence_stren
 from .drafter.models import LogEntryDraft
 from .exporter import export_logbook
 from .gates import INDONESIAN_DAY_NAMES, GateDecision, PreflightGate
-from .models import EXIT_CODES, ApprovedEntry, NoteRecord, RunRecord, Status, get_exit_code
+from .models import (
+    EXIT_CODES,
+    ApprovedEntry,
+    EvidenceItem,
+    NoteRecord,
+    RunRecord,
+    Status,
+    get_exit_code,
+)
 from .notify import send_system_notification
 from .pipeline import ArtifactStore, DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
@@ -26,6 +35,8 @@ from .portal import selectors as sel
 from .reviewer import ReviewSession
 from .settings import load_config
 from .store import LedgerStore
+
+logger = logging.getLogger(__name__)
 
 CONFIRM_WORD = "SETUJU"
 
@@ -50,7 +61,6 @@ def calculate_median(values: list[float]) -> float:
     if not values:
         return 0.0
     return round(float(statistics.median(values)), 2)
-
 
 
 def _config(args: argparse.Namespace) -> PortalConfig:
@@ -153,12 +163,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("=" * 60)
             print(f"CANARY DIAGNOSTIK KESEHATAN PORTAL ({d.isoformat()})")
             print("=" * 60)
-            login_status = "TERHUBUNG (VALID)" if report.get("login") else "BELUM LOGIN / SESI HABIS"
+            login_status = (
+                "TERHUBUNG (VALID)" if report.get("login") else "BELUM LOGIN / SESI HABIS"
+            )
             print(f"Status Autentikasi : {login_status}")
             if report.get("status"):
                 print(f"Status Hari        : {report['status']} ({report.get('label', '')})")
             if "location" in report:
-                print(f"Izin Lokasi        : {'BERHASIL' if report['location'] else 'GAGAL / DITOLAK'}")
+                print(
+                    f"Izin Lokasi        : {'BERHASIL' if report['location'] else 'GAGAL / DITOLAK'}"
+                )
 
             selectors = report.get("selectors_health", {})
             if selectors:
@@ -335,7 +349,6 @@ def cmd_submit(args: argparse.Namespace) -> int:
     return EXIT_CODES[result.status]
 
 
-
 class CliApprovalStage:
     """Implementasi peninjauan dan persetujuan draf untuk CLI."""
 
@@ -477,9 +490,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         notifier=notifier,
     )
 
-    resume_flag = bool(getattr(args, "resume", False)) or (
-        getattr(args, "mode", None) == "resume"
-    )
+    resume_flag = bool(getattr(args, "resume", False)) or (getattr(args, "mode", None) == "resume")
 
     result = coordinator.run(
         target_date=d,
@@ -507,7 +518,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         return cmd_review(review_args)
 
     return result.exit_code
-
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -863,12 +873,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     runs = [r for r in all_runs if d_start <= r.work_date <= d_end]
 
     total_runs = len(runs)
-    successful_runs = sum(
-        1 for r in runs if r.status in (Status.BERHASIL, Status.SUDAH_TERKIRIM)
-    )
-    failed_runs = sum(
-        1 for r in runs if r.status in (Status.GAGAL, Status.CRASH, Status.TERKUNCI)
-    )
+    successful_runs = sum(1 for r in runs if r.status in (Status.BERHASIL, Status.SUDAH_TERKIRIM))
+    failed_runs = sum(1 for r in runs if r.status in (Status.GAGAL, Status.CRASH, Status.TERKUNCI))
     success_rate = round((successful_runs / total_runs * 100.0), 1) if total_runs > 0 else 0.0
 
     durations = [float(r.duration_ms) for r in runs if r.duration_ms > 0]
@@ -942,6 +948,165 @@ def cmd_report(args: argparse.Namespace) -> int:
     print(f"  Rata-rata Edit Ratio : {avg_edit_ratio:.2f}")
     print(f"  Total Entri Terdok.  : {len(rows)} entri ({len(edit_ratios)} dengan metrik edit)")
     print("=" * 80)
+    return 0
+
+
+def cmd_profile_list(args: argparse.Namespace) -> int:
+    """Menampilkan daftar pustaka preset profil kerja (WorkProfile) bawaan secara offline."""
+    import json
+
+    from .workprofile import load_presets
+
+    try:
+        presets = load_presets()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat pustaka preset: %s", exc)
+        print(f"Error memuat pustaka preset: {exc}")
+        return 1
+
+    if getattr(args, "json", False):
+        payload = [p.model_dump() for p in presets]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("=" * 80)
+    print("                   PUSTAKA PRESET PROFIL KERJA (WORKPROFILE)                   ")
+    print("=" * 80)
+    for p in presets:
+        print(f"\n* Profil: {p.profile_name}")
+        if p.natural_description:
+            print(f"  Deskripsi   : {p.natural_description}")
+        app_names = [app.name for app in p.applications]
+        print(f"  Aplikasi    : {', '.join(app_names) if app_names else '(tidak ada)'}")
+        exts = sorted(p.all_file_extensions())
+        print(f"  Ekstensi    : {', '.join(exts) if exts else '(tidak ada)'}")
+        print(
+            f"  Domain Web  : {', '.join(p.browser_domains) if p.browser_domains else '(tidak ada)'}"
+        )
+
+    print("\nTip: Gunakan preset di atas dalam konfigurasi `sources.app.work_profile` Anda.")
+    return 0
+
+
+def cmd_profile_show(args: argparse.Namespace) -> int:
+    """Menampilkan detail WorkProfile yang saat ini aktif dalam konfigurasi aplikasi."""
+    import json
+
+    from .settings import load_config, sync_work_profile_browser_domains
+
+    try:
+        cfg = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat konfigurasi: %s", exc)
+        print(f"Error memuat konfigurasi: {exc}")
+        return 1
+
+    profile = cfg.sources.app.work_profile or getattr(cfg, "work_profile", None)
+    if profile is not None:
+        sync_work_profile_browser_domains(cfg, profile)
+
+    if getattr(args, "json", False):
+        payload = profile.model_dump() if profile else None
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if profile is None:
+        print("Status WorkProfile: TIDAK AKTIF (belum dikonfigurasi).")
+        print("Gunakan 'magang-log profile list' untuk melihat daftar preset yang tersedia.")
+        return 0
+
+    print("=" * 80)
+    print(f"               PROFIL KERJA AKTIF: {profile.profile_name.upper()}              ")
+    print("=" * 80)
+    if profile.natural_description:
+        print(f"Deskripsi Kegiatan : {profile.natural_description}")
+    print(f"Sumber AppActivity : {'Aktif' if cfg.sources.app.enabled else 'Nonaktif'}")
+    print("\nAplikasi yang Dipantau:")
+    for app in profile.applications:
+        exts = ", ".join(app.file_extensions) if app.file_extensions else "-"
+        procs = ", ".join(app.process_names) if app.process_names else "-"
+        logs = ", ".join(app.log_patterns) if app.log_patterns else "-"
+        print(f"  - {app.name}")
+        print(f"      Ekstensi File : {exts}")
+        print(f"      Proses Biner  : {procs}")
+        print(f"      Pola Log      : {logs}")
+
+    synced_domains = cfg.sources.get_browser().get_allowlist()
+    print(f"\nDomain Browser Tersinkronisasi ({len(synced_domains)} domain):")
+    for d in synced_domains:
+        print(f"  * {d}")
+
+    return 0
+
+
+def cmd_preview_evidence(args: argparse.Namespace) -> int:
+    """Menampilkan preview bukti aktivitas yang terkumpul tanpa menjalankan alur submisi."""
+    import json
+    from datetime import date, datetime
+
+    from .collectors.base import run_collectors
+    from .collectors.factory import create_collectors
+    from .settings import load_config
+    from .store import LedgerStore
+
+    try:
+        cfg = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat konfigurasi: %s", exc)
+        print(f"Error memuat konfigurasi: {exc}")
+        return 1
+
+    store = LedgerStore(db_path=args.db or "data/state.db")
+
+    target_date = (
+        date.fromisoformat(args.date) if getattr(args, "date", None) else datetime.now().date()
+    )
+
+    collectors = create_collectors(cfg, store)
+    source_filter = getattr(args, "source", "all")
+    if source_filter and source_filter != "all":
+        collectors = [
+            c for c in collectors if getattr(c, "name", c.__class__.__name__) == source_filter
+        ]
+
+    evidence_items = run_collectors(collectors, target_date)
+
+    if getattr(args, "json", False):
+        payload = [
+            {
+                "id": ev.id,
+                "source": ev.source,
+                "kind": ev.kind,
+                "strength": ev.strength,
+                "title": ev.title,
+                "detail": ev.detail,
+                "ts": ev.ts.isoformat(),
+                "work_date": ev.work_date.isoformat() if ev.work_date else None,
+            }
+            for ev in evidence_items
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("=" * 80)
+    print(f"          PREVIEW BUKTI AKTIVITAS TANGGAL: {target_date.isoformat()}           ")
+    print(
+        f"          Filter Sumber: {source_filter.upper()} | Ditemukan: {len(evidence_items)} item"
+    )
+    print("=" * 80)
+
+    if not evidence_items:
+        print("\nTidak ada bukti aktivitas yang ditemukan untuk kriteria di atas.")
+        return 0
+
+    print(f"\n{'ID':<12} | {'SUMBER':<8} | {'KEKUATAN':<8} | {'JENIS':<16} | {'JUDUL AKTIVITAS'}")
+    print("-" * 80)
+    for ev in evidence_items:
+        strength_badge = "[STRONG]" if ev.strength == "strong" else "[WEAK]  "
+        print(f"{ev.id:<12} | {ev.source:<8} | {strength_badge} | {ev.kind:<16} | {ev.title}")
+        if ev.detail:
+            print(f"             Detail: {ev.detail}")
+
     return 0
 
 
@@ -1061,8 +1226,6 @@ def build_parser(prog: str = "magang-log") -> argparse.ArgumentParser:
     )
 
     parser = argparse.ArgumentParser(prog=prog, parents=[common], description=__doc__)
-
-
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("login", parents=[common], help="login manual sekali, simpan sesi").set_defaults(
@@ -1255,6 +1418,51 @@ def build_parser(prog: str = "magang-log") -> argparse.ArgumentParser:
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_review)
 
+    # Subcommand: profile
+    p_profile = sub.add_parser(
+        "profile",
+        parents=[common],
+        help="inspeksi dan kelola profil kerja magang (WorkProfile)",
+    )
+    p_profile_sub = p_profile.add_subparsers(dest="profile_action")
+    p_profile_list = p_profile_sub.add_parser(
+        "list",
+        parents=[common],
+        help="daftar seluruh pustaka preset profil kerja bawaan",
+    )
+    p_profile_list.add_argument(
+        "--json", action="store_true", help="tampilkan hasil dalam format JSON"
+    )
+    p_profile_list.set_defaults(func=cmd_profile_list)
+
+    p_profile_show = p_profile_sub.add_parser(
+        "show",
+        parents=[common],
+        help="tampilkan profil kerja aktif saat ini",
+    )
+    p_profile_show.add_argument(
+        "--json", action="store_true", help="tampilkan hasil dalam format JSON"
+    )
+    p_profile_show.set_defaults(func=cmd_profile_show)
+    p_profile.set_defaults(func=cmd_profile_show)
+
+    # Subcommand: preview-evidence
+    p_prev = sub.add_parser(
+        "preview-evidence",
+        parents=[common],
+        help="preview pengumpulan bukti aktivitas tanpa menjalankan alur submisi",
+    )
+    p_prev.add_argument(
+        "--source",
+        choices=["all", "app", "git", "notes", "browser"],
+        default="all",
+        help="filter sumber bukti yang ingin dikumpulkan (default: all)",
+    )
+    p_prev.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p_prev.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p_prev.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p_prev.set_defaults(func=cmd_preview_evidence)
+
     return parser
 
 
@@ -1278,4 +1486,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
