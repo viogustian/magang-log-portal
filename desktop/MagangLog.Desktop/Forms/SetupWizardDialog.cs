@@ -1,0 +1,294 @@
+using MagangLog.Desktop.Controls;
+using MagangLog.Desktop.Models;
+using MagangLog.Desktop.Services;
+
+namespace MagangLog.Desktop.Forms;
+
+/// <summary>
+/// Modal 6-step guided onboarding dialog for system requirements, project folders,
+/// WorkProfile detection, Git intensity, review mode, and configuration summary.
+/// </summary>
+public class SetupWizardDialog : Form
+{
+    private readonly BackendApiClient _apiClient;
+    private readonly StepIndicatorPanel _indicator;
+    private readonly Panel _contentContainer;
+    private readonly Panel[] _stepPanels;
+    private readonly Button _btnBack;
+    private readonly Button _btnNext;
+    private readonly Label _lblStatus;
+
+    private int _currentStep = 0;
+
+    public int StepCount => 6;
+    public int CurrentStep => _currentStep;
+    public WizardProgressState State { get; private set; } = new();
+
+    public Button BackButton => _btnBack;
+    public Button NextButton => _btnNext;
+    public StepIndicatorPanel StepIndicator => _indicator;
+    public IReadOnlyList<Panel> StepPanels => _stepPanels;
+
+    public SetupWizardDialog(BackendApiClient? apiClient = null)
+    {
+        _apiClient = apiClient ?? new BackendApiClient();
+
+        Text = "Setup Wizard — Magang Log";
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        Size = new Size(760, 580);
+        MinimumSize = new Size(700, 520);
+        BackColor = Color.White;
+
+        // Top: Step Indicator Panel
+        _indicator = new StepIndicatorPanel();
+        Controls.Add(_indicator);
+
+        // Bottom: Navigation Panel
+        var navPanel = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 64,
+            BackColor = Color.FromArgb(248, 250, 252),
+            Padding = new Padding(20, 14, 20, 14)
+        };
+
+        _lblStatus = new Label
+        {
+            Dock = DockStyle.Left,
+            AutoSize = false,
+            Width = 420,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular)
+        };
+
+        _btnNext = new Button
+        {
+            Text = "Lanjut",
+            Dock = DockStyle.Right,
+            Width = 110,
+            Height = 36,
+            BackColor = Color.FromArgb(37, 99, 235),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold),
+            Cursor = Cursors.Hand
+        };
+        _btnNext.FlatAppearance.BorderSize = 0;
+        _btnNext.Click += async (_, _) => await HandleNextClickAsync();
+
+        _btnBack = new Button
+        {
+            Text = "Kembali",
+            Dock = DockStyle.Right,
+            Width = 100,
+            Height = 36,
+            BackColor = Color.FromArgb(241, 245, 249),
+            ForeColor = Color.FromArgb(71, 85, 105),
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular),
+            Cursor = Cursors.Hand,
+            Enabled = false
+        };
+        _btnBack.FlatAppearance.BorderSize = 0;
+        _btnBack.Click += (_, _) => NavigateBack();
+
+        navPanel.Controls.Add(_lblStatus);
+        navPanel.Controls.Add(_btnBack);
+        navPanel.Controls.Add(_btnNext);
+        Controls.Add(navPanel);
+
+        // Center: Content Container managing 6 step panels
+        _contentContainer = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.White,
+            Padding = new Padding(24, 16, 24, 16)
+        };
+
+        _stepPanels = new Panel[StepCount];
+        for (int i = 0; i < StepCount; i++)
+        {
+            var pnl = CreateStepPlaceholderPanel(i);
+            _stepPanels[i] = pnl;
+            _contentContainer.Controls.Add(pnl);
+        }
+
+        Controls.Add(_contentContainer);
+
+        // Activate step 0
+        GoToStep(0);
+    }
+
+    protected override async void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        await LoadProgressAsync();
+    }
+
+    protected override async void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+
+        // If closed prematurely without finishing, persist entered inputs to disk
+        if (DialogResult != DialogResult.OK)
+        {
+            try
+            {
+                State.CurrentStep = _currentStep;
+                await _apiClient.SaveWizardProgressAsync(State);
+            }
+            catch
+            {
+                // Suppress background errors during closing
+            }
+        }
+    }
+
+    /// <summary>
+    /// Loads saved wizard progress from the backend and resumes at the appropriate step.
+    /// </summary>
+    public async Task LoadProgressAsync()
+    {
+        try
+        {
+            var saved = await _apiClient.GetWizardProgressAsync();
+            if (saved != null && (saved.CurrentStep > 0 || saved.CompletedSteps.Count > 0 || saved.StepData.Count > 0))
+            {
+                ApplyProgressState(saved);
+            }
+        }
+        catch
+        {
+            // Fallback to initial step if backend is unreachable
+        }
+    }
+
+    /// <summary>
+    /// Applies progress state and activates the corresponding step panel.
+    /// </summary>
+    public void ApplyProgressState(WizardProgressState state)
+    {
+        State = state;
+        var stepToActivate = Math.Clamp(state.CurrentStep, 0, StepCount - 1);
+        GoToStep(stepToActivate);
+    }
+
+    /// <summary>
+    /// Switch active panel and update navigation buttons and step indicator.
+    /// </summary>
+    public void GoToStep(int stepIndex)
+    {
+        _currentStep = Math.Clamp(stepIndex, 0, StepCount - 1);
+
+        for (int i = 0; i < _stepPanels.Length; i++)
+        {
+            _stepPanels[i].Visible = (i == _currentStep);
+        }
+
+        _btnBack.Enabled = (_currentStep > 0);
+        _btnNext.Text = (_currentStep == StepCount - 1) ? "Selesai" : "Lanjut";
+
+        _indicator.UpdateStep(_currentStep, State.CompletedSteps);
+        _lblStatus.Text = string.Empty;
+    }
+
+    /// <summary>
+    /// Move backward to the previous step.
+    /// </summary>
+    public void NavigateBack()
+    {
+        if (_currentStep > 0)
+        {
+            GoToStep(_currentStep - 1);
+        }
+    }
+
+    /// <summary>
+    /// Advance to the next step, mark previous completed, and save state.
+    /// </summary>
+    public async Task HandleNextClickAsync()
+    {
+        if (_currentStep >= StepCount - 1)
+        {
+            // Final step: finish wizard
+            State.MarkStepCompleted(_currentStep);
+            DialogResult = DialogResult.OK;
+            Close();
+            return;
+        }
+
+        // Mark current step as completed
+        State.MarkStepCompleted(_currentStep);
+        var nextStep = _currentStep + 1;
+        State.CurrentStep = nextStep;
+
+        GoToStep(nextStep);
+
+        // Asynchronously persist progress
+        try
+        {
+            await _apiClient.SaveWizardProgressAsync(State);
+        }
+        catch (Exception ex)
+        {
+            _lblStatus.Text = $"Peringatan simpan progres: {ex.Message}";
+        }
+    }
+
+    private Panel CreateStepPlaceholderPanel(int stepIndex)
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Visible = false
+        };
+
+        var titles = new[]
+        {
+            "Langkah 1: Cek Requirement Sistem (Gate)",
+            "Langkah 2: Folder Proyek",
+            "Langkah 3: Pekerjaan dan Kata Kunci Aplikasi",
+            "Langkah 4: Seberapa Sering Pakai Git",
+            "Langkah 5: Mode Pengiriman Log",
+            "Langkah 6: Ringkasan dan Konfirmasi"
+        };
+
+        var subtitles = new[]
+        {
+            "Sistem memvalidasi dependensi runtime yang dibutuhkan (Python, Playwright, dll).",
+            "Pilih satu atau beberapa direktori proyek untuk pemantauan aktivitas.",
+            "Ceritakan peran harian Anda atau gunakan kata kunci deteksi aplikasi desktop.",
+            "Tentukan intensitas penggunaan Git untuk mengatur bobot sumber data bukti.",
+            "Pilih mode persetujuan dan pengiriman draf logbook ke portal Monev Kemnaker.",
+            "Tinjau kembali seluruh pilihan konfigurasi sebelum menyelesaikan penyiapan."
+        };
+
+        var header = new Label
+        {
+            Text = titles[stepIndex],
+            Font = new Font(Font.FontFamily, 13f, FontStyle.Bold),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            Dock = DockStyle.Top,
+            Height = 32
+        };
+
+        var subHeader = new Label
+        {
+            Text = subtitles[stepIndex],
+            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Dock = DockStyle.Top,
+            Height = 26
+        };
+
+        panel.Controls.Add(subHeader);
+        panel.Controls.Add(header);
+        return panel;
+    }
+}
+

@@ -214,3 +214,11 @@ docs/adr
 docs/agents
 
 GLOSSARY.md
+
+# .NET / C#
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
