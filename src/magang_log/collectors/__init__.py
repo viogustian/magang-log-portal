@@ -22,6 +22,7 @@ from .privacy import (
     PrivacyFilter,
     sanitize_evidence,
 )
+from .recent import RecentItemsScanner, parse_lnk, sanitize_path
 from .strength import (
     StrengthEvaluationResult,
     build_drafting_payload,
@@ -43,6 +44,7 @@ __all__ = [
     "NotesCollector",
     "PrivacyConfig",
     "PrivacyFilter",
+    "RecentItemsScanner",
     "SourceConfig",
     "StrengthEvaluationResult",
     "build_drafting_payload",
@@ -51,7 +53,9 @@ __all__ = [
     "filter_evidence_for_llm",
     "is_source_enabled_for_llm",
     "is_domain_allowed",
+    "parse_lnk",
     "run_collectors",
     "sanitize_evidence",
+    "sanitize_path",
     "sanitize_url",
 ]
