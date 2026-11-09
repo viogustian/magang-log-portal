@@ -4,6 +4,7 @@ import pytest
 
 from magang_log.settings import (
     AppConfig,
+    AppSourceSettings,
     ConfigurationError,
     load_config,
     normalize_workdays,
@@ -116,3 +117,75 @@ def test_normalize_workdays() -> None:
 
     with pytest.raises(ValueError, match="Invalid workday name"):
         normalize_workdays(["funday"])
+
+
+def test_app_source_settings_defaults() -> None:
+    app_cfg = AppSourceSettings()
+    assert app_cfg.enabled is True
+    assert app_cfg.work_profile is None
+    assert app_cfg.recent_dir is None
+    # Default recent dir resolves to a Path
+    assert isinstance(app_cfg.get_recent_dir(), Path)
+
+
+def test_app_config_with_sources_app(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+sources:
+  app:
+    enabled: true
+    recent_dir: "custom/recent"
+    work_profile:
+      profile_name: "Data Analyst"
+      applications:
+        - name: "Power BI Desktop"
+          process_names: ["PBIDesktop.exe"]
+          file_extensions: [".pbix"]
+      browser_domains: ["app.powerbi.com"]
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_file, root_dir=tmp_path)
+    assert cfg.sources.app.enabled is True
+    assert cfg.sources.app.recent_dir == (tmp_path / "custom/recent").resolve()
+    assert cfg.sources.app.work_profile is not None
+    assert cfg.sources.app.work_profile.profile_name == "Data Analyst"
+    assert cfg.sources.app.work_profile.browser_domains == ["app.powerbi.com"]
+
+
+def test_reject_unknown_keys_in_sources_app(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+sources:
+  app:
+    enabled: true
+    unrecognized_property: "invalid"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_config(config_file, root_dir=tmp_path)
+    assert "sources.app.unrecognized_property" in str(exc_info.value)
+
+
+def test_app_config_with_disabled_sources_app(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+sources:
+  app:
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_file, root_dir=tmp_path)
+    assert cfg.sources.app.enabled is False
+    assert cfg.sources.app.work_profile is None
+    assert cfg.sources.app.recent_dir is None
+
+

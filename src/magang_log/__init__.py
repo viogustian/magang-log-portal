@@ -33,6 +33,16 @@ from .pipeline import (
     PipelineState,
     StateMachine,
 )
+from .settings import (
+    AppConfig,
+    AppSourceSettings,
+    ConfigurationError,
+    clean_domain,
+    load_config,
+    merge_browser_domains,
+    sync_work_profile_browser_domains,
+    update_config_browser_domains,
+)
 from .workprofile import (
     ApplicationConfig,
     PresetError,
@@ -45,11 +55,14 @@ from .workprofile import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "AppConfig",
+    "AppSourceSettings",
     "ApplicationConfig",
     "CheckResult",
     "CheckStatus",
     "CliResult",
     "CliRunner",
+    "ConfigurationError",
     "Doctor",
     "DoctorReport",
     "EXIT_CODES",
@@ -69,6 +82,7 @@ __all__ = [
     "WindowsToastNotifier",
     "WorkProfile",
     "__version__",
+    "clean_domain",
     "clean_old_logs",
     "clean_old_run_artifacts",
     "compile_logbook_markdown",
@@ -79,9 +93,13 @@ __all__ = [
     "get_logger",
     "get_notifier",
     "get_preset",
+    "load_config",
     "load_preset_map",
     "load_presets",
     "log_run_event",
+    "merge_browser_domains",
     "send_system_notification",
+    "sync_work_profile_browser_domains",
+    "update_config_browser_domains",
 ]
 

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import re
 from pathlib import Path
+from typing import Sequence
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from .workprofile import WorkProfile
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationError(Exception):
@@ -131,11 +139,29 @@ class BrowserSourceSettings(StrictBaseModel):
         return self.allowlist if self.allowlist else self.allow_domains
 
 
+class AppSourceSettings(StrictBaseModel):
+    """Konfigurasi sumber pengumpulan aktivitas aplikasi desktop (AppActivity)."""
+
+    enabled: bool = True
+    work_profile: WorkProfile | None = None
+    recent_dir: Path | None = None
+
+    def get_recent_dir(self) -> Path:
+        """Mengembalikan direktori Windows Recent aktif, atau fallback default OS."""
+        if self.recent_dir is not None:
+            return self.recent_dir
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "Microsoft" / "Windows" / "Recent"
+        return Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Recent"
+
+
 class SourcesSettings(StrictBaseModel):
     git: GitSourceSettings = Field(default_factory=GitSourceSettings)
     notes: NotesSourceSettings = Field(default_factory=NotesSourceSettings)
     browser: BrowserSourceSettings = Field(default_factory=BrowserSourceSettings)
     browser_history: BrowserSourceSettings | None = None
+    app: AppSourceSettings = Field(default_factory=AppSourceSettings)
 
     def get_browser(self) -> BrowserSourceSettings:
         """Mengambil konfigurasi browser yang aktif (browser_history atau browser)."""
@@ -255,5 +281,165 @@ def load_config(
         config.sources.git.repositories = [
             str(resolve_path(r, root)) for r in config.sources.git.repositories
         ]
+    if config.sources.app.recent_dir is not None:
+        config.sources.app.recent_dir = resolve_path(config.sources.app.recent_dir, root)
 
     return config
+
+
+def clean_domain(domain: str) -> str:
+    """Membersihkan string domain: membuang protokol, port, path, trailing slash, dan spasi.
+
+    Contoh:
+    - 'https://figma.com/' -> 'figma.com'
+    - 'http://dribbble.com/shots' -> 'dribbble.com'
+    - '  APP.POWERBI.COM:443/report  ' -> 'app.powerbi.com'
+    """
+    s = str(domain).strip()
+    if not s:
+        return ""
+    # Hapus protokol
+    if s.lower().startswith("https://"):
+        s = s[8:]
+    elif s.lower().startswith("http://"):
+        s = s[7:]
+    # Buang trailing slashes dan whitespace
+    s = s.rstrip("/").strip()
+    # Ambil bagian hostname sebelum slash pertama atau port
+    if "/" in s:
+        s = s.split("/")[0].strip()
+    if ":" in s:
+        s = s.split(":")[0].strip()
+    return s.lower()
+
+
+def merge_browser_domains(
+    existing_domains: Sequence[str],
+    profile_domains: Sequence[str],
+) -> list[str]:
+    """Menggabungkan domain peramban dari profil kerja ke daftar domain yang sudah ada.
+
+    Menjaga urutan domain kustom pengguna yang telah ada sebelumnya, dan menambahkan domain
+    profil kerja baru tanpa duplikasi (case-insensitive). Operasi bersifat idempoten.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+
+    for d in [*existing_domains, *profile_domains]:
+        cleaned = clean_domain(d)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            result.append(cleaned)
+
+    return result
+
+
+def sync_work_profile_browser_domains(
+    config: AppConfig,
+    profile: WorkProfile | None = None,
+) -> list[str]:
+    """Menyinkronkan browser_domains dari WorkProfile aktif ke sources.browser.allow_domains pada AppConfig."""
+    browser_cfg = config.sources.get_browser()
+    if profile is None:
+        if not config.sources.app.enabled:
+            return browser_cfg.get_allowlist()
+        target_profile = config.sources.app.work_profile
+    else:
+        target_profile = profile
+
+    if target_profile is None or not target_profile.browser_domains:
+        return browser_cfg.get_allowlist()
+
+    merged = merge_browser_domains(
+        browser_cfg.get_allowlist(),
+        target_profile.browser_domains,
+    )
+    browser_cfg.allow_domains = merged
+    if browser_cfg.allowlist:
+        browser_cfg.allowlist = merged
+    return merged
+
+
+def update_config_browser_domains(
+    config_path: Path | str,
+    profile_or_domains: WorkProfile | Sequence[str],
+) -> Path:
+    """Menyimpan pembaruan browser allowlist hasil sinkronisasi WorkProfile ke file YAML config.
+
+    Mempertahankan komentar dan struktur file jika memungkinkan, serta memastikan
+    file hasil pembaruan tetap valid menurut skema AppConfig.
+
+    Raises:
+        ConfigurationError: Jika file konfigurasi tidak ditemukan atau tidak valid.
+    """
+    target = Path(config_path).resolve()
+    if not target.exists():
+        raise ConfigurationError(f"File konfigurasi tidak ditemukan: {target}")
+
+    try:
+        raw_text = target.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(raw_text) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigurationError(f"Sintaks YAML tidak valid di {target}: {exc}") from exc
+    except OSError as exc:
+        raise ConfigurationError(f"Gagal membaca file konfigurasi {target}: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise ConfigurationError(f"Isi file konfigurasi harus berupa dictionary: {target}")
+
+    if isinstance(profile_or_domains, WorkProfile):
+        profile_domains = profile_or_domains.browser_domains
+    else:
+        profile_domains = list(profile_or_domains)
+
+    sources_dict = parsed.setdefault("sources", {})
+    if not isinstance(sources_dict, dict):
+        sources_dict = {}
+        parsed["sources"] = sources_dict
+
+    browser_dict = sources_dict.setdefault("browser", {})
+    if not isinstance(browser_dict, dict):
+        browser_dict = {}
+        sources_dict["browser"] = browser_dict
+
+    allow_key = "allowlist" if "allowlist" in browser_dict else "allow_domains"
+    existing_domains = browser_dict.get(allow_key, [])
+    if not isinstance(existing_domains, list):
+        existing_domains = []
+
+    merged = merge_browser_domains(existing_domains, profile_domains)
+    browser_dict[allow_key] = merged
+
+    # Coba ganti langsung blok/flow allow_domains/allowlist pada teks asli untuk mempertahankan komentar
+    formatted_json = json.dumps(merged)
+    pattern = re.compile(
+        rf"(^[ \t]*{allow_key}[ \t]*:[ \t]*)(?:\[[^\]]*\]|(?:\r?\n[ \t]*-[ \t]*[^\r\n]+)+)",
+        re.MULTILINE,
+    )
+
+    if pattern.search(raw_text):
+        new_text = pattern.sub(rf"\g<1>{formatted_json}", raw_text, count=1)
+    else:
+        new_text = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=True)
+
+    # Validasi bahwa hasil pembaruan valid menurut skema AppConfig
+    try:
+        re_parsed = yaml.safe_load(new_text)
+        AppConfig.model_validate(re_parsed)
+    except (yaml.YAMLError, ValidationError) as exc:
+        logger.debug(
+            "Regex update allow_domains tidak valid, fallback ke safe_dump: %s",
+            exc,
+        )
+        new_text = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=True)
+        re_parsed = yaml.safe_load(new_text)
+        try:
+            AppConfig.model_validate(re_parsed)
+        except ValidationError as val_exc:
+            raise ConfigurationError(
+                f"Hasil persistensi konfigurasi tidak valid: {val_exc}"
+            ) from val_exc
+
+    target.write_text(new_text, encoding="utf-8")
+    return target
+
