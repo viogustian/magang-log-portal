@@ -26,6 +26,9 @@ public class WizardProgressState
     [JsonPropertyName("keywords")]
     public List<string> Keywords { get; set; } = new();
 
+    [JsonPropertyName("sources")]
+    public SourcesConfig Sources { get; set; } = new();
+
     [JsonPropertyName("step_data")]
     public Dictionary<string, object?> StepData { get; set; } = new();
 

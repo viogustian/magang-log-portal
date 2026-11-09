@@ -17,6 +17,7 @@ public class SetupWizardDialog : Form
     private readonly RequirementListPanel _requirementPanel;
     private readonly FolderListPanel _folderPanel;
     private readonly JobRolePanel _rolePanel;
+    private readonly GitFrequencyPanel _frequencyPanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
@@ -34,6 +35,7 @@ public class SetupWizardDialog : Form
     public RequirementListPanel RequirementPanel => _requirementPanel;
     public FolderListPanel FolderPanel => _folderPanel;
     public JobRolePanel RolePanel => _rolePanel;
+    public GitFrequencyPanel FrequencyPanel => _frequencyPanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -143,6 +145,12 @@ public class SetupWizardDialog : Form
         _stepPanels[2].Controls.Add(_rolePanel);
         _rolePanel.BringToFront();
 
+        // Initialize and host GitFrequencyPanel in Step 3
+        _frequencyPanel = new GitFrequencyPanel();
+        _frequencyPanel.SourcesChanged += (_, _) => EvaluateGateState();
+        _stepPanels[3].Controls.Add(_frequencyPanel);
+        _frequencyPanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -213,6 +221,11 @@ public class SetupWizardDialog : Form
         {
             _rolePanel.Description = state.RoleDescription;
             _rolePanel.KeywordPanel.SetProfile(state.ProfileName, state.Keywords ?? new List<string>());
+        }
+
+        if (state.Sources != null)
+        {
+            _frequencyPanel.SetConfig(state.Sources);
         }
 
         var stepToActivate = Math.Clamp(state.CurrentStep, 0, StepCount - 1);
@@ -292,6 +305,21 @@ public class SetupWizardDialog : Form
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
+        else if (_currentStep == 3)
+        {
+            if (_frequencyPanel == null || _frequencyPanel.HasActiveSources)
+            {
+                _btnNext.Enabled = true;
+                _lblStatus.Text = "Pilihan frekuensi Git dan persetujuan privasi siap.";
+                _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _btnNext.Enabled = false;
+                _lblStatus.Text = "Aktifkan minimal satu sumber bukti (Git, Aplikasi, atau Browser) untuk melanjutkan.";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+        }
         else
         {
             _btnNext.Enabled = true;
@@ -328,6 +356,11 @@ public class SetupWizardDialog : Form
             State.SetStepData("role_description", State.RoleDescription);
             State.SetStepData("profile_name", State.ProfileName);
             State.SetStepData("keywords", State.Keywords);
+        }
+        else if (_currentStep == 3)
+        {
+            State.Sources = _frequencyPanel.GetConfig();
+            State.SetStepData("sources", State.Sources);
         }
 
         if (_currentStep >= StepCount - 1)
