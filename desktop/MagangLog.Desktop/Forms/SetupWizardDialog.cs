@@ -14,6 +14,7 @@ public class SetupWizardDialog : Form
     private readonly StepIndicatorPanel _indicator;
     private readonly Panel _contentContainer;
     private readonly Panel[] _stepPanels;
+    private readonly RequirementListPanel _requirementPanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
@@ -26,7 +27,9 @@ public class SetupWizardDialog : Form
 
     public Button BackButton => _btnBack;
     public Button NextButton => _btnNext;
+    public Label StatusLabel => _lblStatus;
     public StepIndicatorPanel StepIndicator => _indicator;
+    public RequirementListPanel RequirementPanel => _requirementPanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -118,6 +121,12 @@ public class SetupWizardDialog : Form
             _contentContainer.Controls.Add(pnl);
         }
 
+        // Initialize and host RequirementListPanel in Step 0
+        _requirementPanel = new RequirementListPanel(_apiClient);
+        _requirementPanel.GateStateChanged += (_, _) => EvaluateGateState();
+        _stepPanels[0].Controls.Add(_requirementPanel);
+        _requirementPanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -128,6 +137,10 @@ public class SetupWizardDialog : Form
     {
         base.OnLoad(e);
         await LoadProgressAsync();
+        if (_currentStep == 0)
+        {
+            await _requirementPanel.LoadRequirementsAsync();
+        }
     }
 
     protected override async void OnFormClosing(FormClosingEventArgs e)
@@ -194,7 +207,36 @@ public class SetupWizardDialog : Form
         _btnNext.Text = (_currentStep == StepCount - 1) ? "Selesai" : "Lanjut";
 
         _indicator.UpdateStep(_currentStep, State.CompletedSteps);
-        _lblStatus.Text = string.Empty;
+
+        EvaluateGateState();
+    }
+
+    /// <summary>
+    /// Evaluates step-specific gates (e.g. Requirement gate on step 0).
+    /// </summary>
+    public void EvaluateGateState()
+    {
+        if (_currentStep == 0)
+        {
+            if (_requirementPanel == null || _requirementPanel.AllRequirementsSatisfied)
+            {
+                _btnNext.Enabled = true;
+                _lblStatus.Text = "Semua requirement sistem terpenuhi.";
+                _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _btnNext.Enabled = false;
+                var count = _requirementPanel.UnmetCount;
+                _lblStatus.Text = $"{count} requirement belum terpenuhi — lihat item bertanda ❌/⚠️ di atas";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+            }
+        }
+        else
+        {
+            _btnNext.Enabled = true;
+            _lblStatus.Text = string.Empty;
+        }
     }
 
     /// <summary>

@@ -66,7 +66,8 @@ public class SetupWizardDialogTests
             Assert.Equal(0, dialog.CurrentStep);
             Assert.False(dialog.BackButton.Enabled);
             Assert.Equal("Lanjut", dialog.NextButton.Text);
-            Assert.True(dialog.NextButton.Enabled);
+            // On step 0, NextButton is disabled until system requirements pass the gate
+            Assert.False(dialog.NextButton.Enabled);
         });
     }
 

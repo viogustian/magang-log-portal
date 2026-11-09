@@ -25,6 +25,49 @@ public class BackendApiClient
     }
 
     /// <summary>
+    /// Fetch dynamic system requirements checklist from GET /api/setup/requirements.
+    /// </summary>
+    public virtual async Task<List<RequirementItem>> GetRequirementsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/setup/requirements", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new List<RequirementItem>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<List<RequirementItem>>(json, JsonOptions) ?? new List<RequirementItem>();
+        }
+        catch (Exception)
+        {
+            return new List<RequirementItem>();
+        }
+    }
+
+    /// <summary>
+    /// Re-evaluate a single requirement by name via POST /api/setup/recheck-requirement.
+    /// </summary>
+    public virtual async Task<RequirementItem?> RecheckRequirementAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        var req = new RecheckRequirementRequest { Name = name };
+        var jsonPayload = JsonSerializer.Serialize(req, JsonOptions);
+        var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/recheck-requirement", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<RequirementItem>(json, JsonOptions);
+    }
+
+    /// <summary>
     /// Fetch partial wizard progress from GET /api/setup/wizard-progress.
     /// </summary>
     public virtual async Task<WizardProgressState> GetWizardProgressAsync(CancellationToken cancellationToken = default)
