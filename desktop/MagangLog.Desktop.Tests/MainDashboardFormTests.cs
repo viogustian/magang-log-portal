@@ -1,4 +1,5 @@
 using MagangLog.Desktop.Forms;
+using MagangLog.Desktop.Models;
 using MagangLog.Desktop.Services;
 using Xunit;
 
@@ -417,6 +418,109 @@ public class MainDashboardFormTests
         {
             form?.Dispose();
         }
+    }
+
+    [Fact]
+    public async Task TestRefreshStatusAsync_SwitchesToFallbackNoteModeWhenPerluInput()
+    {
+        var statusJson = """
+        {
+            "target_date": "2026-11-10",
+            "status": "PERLU_INPUT",
+            "is_workday": true,
+            "is_holiday": false,
+            "holiday_name": null,
+            "has_submitted_entry": false,
+            "needs_user_action": true
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("/api/status/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(statusJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/evidence/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"items\":[]}", System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/entry/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var client = new BackendApiClient(new HttpClient(handler));
+        MainDashboardForm? form = null;
+        RunSta(() =>
+        {
+            form = new MainDashboardForm(client);
+        });
+
+        try
+        {
+            await form!.RefreshStatusAsync();
+
+            Assert.Equal(DashboardMode.FallbackNote, form.CurrentMode);
+            Assert.True(form.IsFallbackNoteVisible);
+            Assert.False(form.IsDraftEditorVisible);
+        }
+        finally
+        {
+            form?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void TestSetDashboardMode_TogglesVisibilityDirectly()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+
+            form.SetDashboardMode(DashboardMode.FallbackNote);
+            Assert.Equal(DashboardMode.FallbackNote, form.CurrentMode);
+            Assert.True(form.IsFallbackNoteVisible);
+            Assert.False(form.IsDraftEditorVisible);
+
+            form.SetDashboardMode(DashboardMode.DraftEditor);
+            Assert.Equal(DashboardMode.DraftEditor, form.CurrentMode);
+            Assert.False(form.IsFallbackNoteVisible);
+            Assert.True(form.IsDraftEditorVisible);
+        });
+    }
+
+    [Fact]
+    public void TestFallbackNote_SwitchToEditorRequested_RestoresDraftEditorMode()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+
+            form.SetDashboardMode(DashboardMode.FallbackNote);
+            Assert.Equal(DashboardMode.FallbackNote, form.CurrentMode);
+            Assert.True(form.IsFallbackNoteVisible);
+
+            form.FallbackNote.SwitchToEditor();
+            Assert.Equal(DashboardMode.DraftEditor, form.CurrentMode);
+            Assert.False(form.IsFallbackNoteVisible);
+            Assert.True(form.IsDraftEditorVisible);
+        });
     }
 }
 

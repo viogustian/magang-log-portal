@@ -397,5 +397,55 @@ public class BackendApiClientTests
         Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
         Assert.EndsWith("/api/entry/approve", handler.SentRequests[0].RequestUri!.AbsolutePath);
     }
+
+    [Fact]
+    public async Task TestPostNoteAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "note_id": "note-abc-999",
+            "created_at": "2026-11-10T10:05:00Z"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var req = new CreateNoteRequest
+        {
+            WorkDate = "2026-11-10",
+            Category = "aktivitas",
+            Note = "Diskusi perancangan FallbackNotePanel."
+        };
+
+        var response = await client.PostNoteAsync(req);
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Equal("note-abc-999", response.NoteId);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/notes", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestPostNoteAsync_FailureReturnsNull()
+    {
+        var handler = new MockHttpMessageHandler("Internal Server Error", HttpStatusCode.InternalServerError);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var req = new CreateNoteRequest
+        {
+            WorkDate = "2026-11-10",
+            Category = "aktivitas",
+            Note = "Diskusi perancangan."
+        };
+
+        var response = await client.PostNoteAsync(req);
+
+        Assert.Null(response);
+        Assert.Single(handler.SentRequests);
+    }
 }
 

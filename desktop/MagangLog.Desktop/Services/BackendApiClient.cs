@@ -394,4 +394,31 @@ public class BackendApiClient
             return null;
         }
     }
+
+    /// <summary>
+    /// Submit manual reflection note via POST /api/notes (ADR-0003).
+    /// </summary>
+    public virtual async Task<CreateNoteResponse?> PostNoteAsync(
+        CreateNoteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var jsonPayload = JsonSerializer.Serialize(request, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/notes", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<CreateNoteResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }

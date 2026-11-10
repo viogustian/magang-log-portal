@@ -22,6 +22,8 @@ public class MainDashboardForm : Form
     public Panel CalendarPanel { get; }
     public EvidencePanel EvidencePanel { get; }
     public DraftEditorPanel DraftEditor { get; }
+    public FallbackNotePanel FallbackNote { get; }
+    public DashboardMode CurrentMode { get; private set; } = DashboardMode.DraftEditor;
     public System.Windows.Forms.Timer PollingTimer { get; }
 
     public bool OnboardingComplete { get; set; } = false;
@@ -184,9 +186,16 @@ public class MainDashboardForm : Form
             BackColor = Color.FromArgb(241, 245, 249)
         };
 
-        // Left Panel (Panel1: Draft Editor & Quick Notes)
+        // Left Panel (Panel1: Draft Editor & Quick Notes Fallback)
         DraftEditor = new DraftEditorPanel(_apiClient);
         DraftEditor.OnDraftUpdated += async () => await RefreshStatusAsync();
+
+        FallbackNote = new FallbackNotePanel(_apiClient);
+        FallbackNote.OnNoteSubmitted += async () => await RefreshStatusAsync();
+        FallbackNote.OnSwitchToEditorRequested += () => SetDashboardMode(DashboardMode.DraftEditor);
+        FallbackNote.Visible = false;
+
+        MainSplitContainer.Panel1.Controls.Add(FallbackNote);
         MainSplitContainer.Panel1.Controls.Add(DraftEditor);
 
         // Right Panel (Panel2: Evidence Feed)
@@ -253,14 +262,40 @@ public class MainDashboardForm : Form
 
             EvidencePanel.SetEvidenceItems(evidence);
             DraftEditor.LoadEntry(entry);
+            FallbackNote.SetTargetDate(status?.TargetDate);
+
+            var resolvedMode = DashboardModeResolver.ResolveMode(status, entry);
+            SetDashboardMode(resolvedMode);
         }
         catch (Exception)
         {
             StatusBanner.UpdateOffline();
             EvidencePanel.SetEvidenceItems(null);
             DraftEditor.LoadEntry(null);
+            SetDashboardMode(DashboardMode.DraftEditor);
         }
     }
+
+    /// <summary>
+    /// Switch active mode between DraftEditor and FallbackNote.
+    /// </summary>
+    public void SetDashboardMode(DashboardMode mode)
+    {
+        CurrentMode = mode;
+        if (mode == DashboardMode.FallbackNote)
+        {
+            FallbackNote.Visible = true;
+            DraftEditor.Visible = false;
+        }
+        else
+        {
+            FallbackNote.Visible = false;
+            DraftEditor.Visible = true;
+        }
+    }
+
+    public bool IsFallbackNoteVisible => CurrentMode == DashboardMode.FallbackNote;
+    public bool IsDraftEditorVisible => CurrentMode == DashboardMode.DraftEditor;
 
     /// <summary>
     /// Trigger manual pipeline execution and refresh today's status.
