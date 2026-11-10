@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MagangLog.Desktop.Tests/MagangLog.Desktop.Tests.csproj" />
+  <Project Path="MagangLog.Desktop/MagangLog.Desktop.csproj" />
+</Solution>

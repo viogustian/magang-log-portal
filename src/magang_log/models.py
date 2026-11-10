@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
+
+from .collectors.base import Evidence as Evidence
 
 
 class DayStatus(StrEnum):
@@ -34,10 +37,13 @@ class Status(StrEnum):
     PERLU_INPUT = "PERLU_INPUT"  # bukti tidak mencukupi, butuh catatan manual
     PERLU_REVIEW = "PERLU_REVIEW"  # validasi butuh tinjauan manusia atau tertunda
     VALIDATION_FAILED = "VALIDATION_FAILED"  # validasi draf gagal
+    VALIDATION_ERROR = "VALIDATION_ERROR"  # alias standar untuk kesalahan validasi draf
+    TIDAK_DIKENAL = "TIDAK_DIKENAL"  # label status kalender tidak dikenal: fail-closed
+    CRASH = "CRASH"  # crash fatal atau kegagalan tak terduga
 
 
-# Kode keluar CLI (lihat PRD bagian 11.3)
-EXIT_CODES: dict[Status, int] = {
+# Kode keluar CLI (lihat PRD bagian 11.3 & issue 05-01)
+EXIT_CODES: dict[Status | str, int] = {
     Status.BERHASIL: 0,
     Status.SUDAH_TERKIRIM: 0,
     Status.LIBUR: 0,
@@ -47,10 +53,43 @@ EXIT_CODES: dict[Status, int] = {
     Status.PERLU_REVIEW: 10,
     Status.LOGIN_DIPERLUKAN: 20,
     Status.VALIDATION_FAILED: 30,
+    Status.VALIDATION_ERROR: 30,
     Status.GAGAL: 40,
     Status.TERKUNCI: 40,
     Status.LOKASI_TIDAK_TERSEDIA: 40,
+    Status.TIDAK_DIKENAL: 40,
+    Status.CRASH: 1,
+    # String key compatibility
+    "BERHASIL": 0,
+    "SUDAH_TERKIRIM": 0,
+    "LIBUR": 0,
+    "DRYRUN": 0,
+    "PERLU_TINDAKAN": 10,
+    "PERLU_INPUT": 10,
+    "PERLU_REVIEW": 10,
+    "LOGIN_DIPERLUKAN": 20,
+    "VALIDATION_FAILED": 30,
+    "VALIDATION_ERROR": 30,
+    "GAGAL": 40,
+    "TERKUNCI": 40,
+    "LOKASI_TIDAK_TERSEDIA": 40,
+    "TIDAK_DIKENAL": 40,
+    "CRASH": 1,
 }
+
+
+def get_exit_code(status: Status | str | None) -> int:
+    """Mengembalikan kode keluar proses standar untuk status yang diberikan."""
+    if status is None:
+        return 1
+    if isinstance(status, Status):
+        return EXIT_CODES.get(status, 1)
+    status_str = str(status).strip()
+    try:
+        enum_val = Status(status_str)
+        return EXIT_CODES.get(enum_val, EXIT_CODES.get(status_str, 1))
+    except ValueError:
+        return EXIT_CODES.get(status_str, 1)
 
 
 @dataclass(frozen=True)
@@ -72,6 +111,21 @@ class ApprovedEntry:
     kendala: str
     approved_at: datetime | None = None  # None = belum disetujui => tidak boleh dikirim
     kehadiran: str = "Hadir"
+    edit_ratio: float = 0.0
+    content_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.content_hash:
+            combined = (
+                f"{self.aktivitas.strip()}\n{self.pembelajaran.strip()}\n{self.kendala.strip()}"
+            )
+            computed = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+            object.__setattr__(self, "content_hash", computed)
+
+    def assert_approved(self) -> None:
+        """Memastikan entri sudah disetujui manusia (approved_at tidak kosong)."""
+        if self.approved_at is None:
+            raise ValueError("entri belum disetujui manusia (approved_at kosong)")
 
     def problems(self, min_chars: int, max_chars: int) -> list[str]:
         """Pelanggaran aturan form portal (min/maks karakter, kehadiran)."""
@@ -93,6 +147,7 @@ class PortalResult:
     note: str
     day: DayInfo | None = None
     screenshots: list[Path] = field(default_factory=list)
+    traces: list[Path] = field(default_factory=list)
 
 
 @dataclass

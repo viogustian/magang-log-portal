@@ -73,6 +73,7 @@ share/python-wheels/
 MANIFEST
 pip-wheel-metadata/
 pip-delete-this-directory.txt
+*.zip
 
 # ------------------------------------------------------------------------------
 # 3. Code Quality, Testing & Type Checking
@@ -201,9 +202,38 @@ $RECYCLE.BIN/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+.vs/
+*.user
+*.suo
 *.code-workspace
 
 
 .agents
 .scratch
 prd.md
+config.yaml
+
+docs/adr
+docs/agents
+
+GLOSSARY.md
+
+# .NET / C#
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+# Runtime Setup Wizard & Local Config Overrides
+wizard-progress.yaml
+wizard-progress*.yaml
+config.local.yaml
+*.local.yaml
+
+# .NET Publish & Packaging Artifacts
+publish/
+TestResults/
+
+# Inno Setup Compiler Default Output
+Output/

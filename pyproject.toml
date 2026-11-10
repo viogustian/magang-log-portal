@@ -12,13 +12,16 @@ dependencies = [
     "playwright>=1.40",
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "beautifulsoup4", "lxml", "ruff"]
+dev = ["pytest>=8", "beautifulsoup4", "lxml", "ruff", "httpx>=0.27.0"]
 
 [project.scripts]
 magang-portal = "magang_log.cli:main"
+magang-log = "magang_log.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

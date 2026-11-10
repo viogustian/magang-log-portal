@@ -3,24 +3,64 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import logging
 import os
+import statistics
 import sys
-from dataclasses import replace
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-from playwright.sync_api import sync_playwright
-
-from .gates import GateDecision, PreflightGate
-from .models import EXIT_CODES, ApprovedEntry, Status
-from .pipeline import DraftResult, PipelineCoordinator, ValidationResult
+from .collectors.factory import collect_and_sanitize_evidence
+from .collectors.strength import build_drafting_payload, evaluate_evidence_strength
+from .drafter.models import LogEntryDraft
+from .exporter import export_logbook
+from .gates import INDONESIAN_DAY_NAMES, GateDecision, PreflightGate
+from .models import (
+    EXIT_CODES,
+    ApprovedEntry,
+    EvidenceItem,
+    NoteRecord,
+    RunRecord,
+    Status,
+    get_exit_code,
+)
+from .notify import send_system_notification
+from .pipeline import ArtifactStore, DraftResult, PipelineCoordinator, ValidationResult
 from .portal import NotApproved, PlaywrightPortal, PortalConfig
 from .portal import selectors as sel
+from .reviewer import ReviewSession
 from .settings import load_config
 from .store import LedgerStore
 
+logger = logging.getLogger(__name__)
+
 CONFIRM_WORD = "SETUJU"
+
+
+def calculate_percentile(values: list[float], percentile: float) -> float:
+    """Menghitung persentil dari daftar nilai numerik dengan interpolasi linier."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    k = (len(sorted_values) - 1) * (percentile / 100.0)
+    f = int(k)
+    c = f + 1
+    if c < len(sorted_values):
+        d0 = sorted_values[f] * (c - k)
+        d1 = sorted_values[c] * (k - f)
+        return round(float(d0 + d1), 2)
+    return round(float(sorted_values[-1]), 2)
+
+
+def calculate_median(values: list[float]) -> float:
+    """Menghitung nilai tengah (median) dari daftar nilai numerik."""
+    if not values:
+        return 0.0
+    return round(float(statistics.median(values)), 2)
 
 
 def _config(args: argparse.Namespace) -> PortalConfig:
@@ -56,41 +96,138 @@ def _print(obj: object) -> None:
 
 def cmd_login(args: argparse.Namespace) -> int:
     cfg = _config(args)
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False, channel=cfg.channel)
-        context = browser.new_context()
-        page = context.new_page()
-        page.goto(cfg.base_url)
-        print("Login MANUAL di jendela browser (termasuk OTP/captcha bila ada).")
-        print("Setelah halaman 'Riwayat Kehadiran' tampil, kembali ke sini dan tekan Enter.")
-        input()
-        try:
-            sel.history_heading(page).wait_for(state="visible", timeout=5_000)
-        except Exception as exc:  # noqa: BLE001 - dilaporkan ke pengguna, bukan ditelan
-            print(
-                f"Halaman Riwayat Kehadiran belum tampil; sesi TIDAK disimpan ({exc.__class__.__name__})."
-            )
-            browser.close()
-            return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
-        cfg.auth_state.parent.mkdir(parents=True, exist_ok=True)
-        context.storage_state(path=str(cfg.auth_state))
-        try:
-            os.chmod(cfg.auth_state, 0o600)
-        except OSError:
-            pass  # Windows: izin POSIX tidak berlaku; folder data/ tetap di-gitignore
-        browser.close()
-    print(
-        f"Sesi disimpan di {cfg.auth_state}. File ini setara kunci akun: JANGAN di-commit/dibagikan."
+    from .portal.session import LoginRequired, SessionManager
+
+    mgr = SessionManager(
+        auth_state=cfg.auth_state,
+        base_url=cfg.base_url,
+        channel=cfg.channel,
+        timeout_ms=cfg.timeout_ms,
+        login_markers=cfg.login_markers,
     )
-    return 0
+    try:
+        success = mgr.interactive_login()
+        return 0 if success else EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+    except LoginRequired as exc:
+        print(f"Login tidak selesai: {exc}")
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Terjadi kesalahan saat proses login ({exc.__class__.__name__}): {exc}")
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
 
 
 def cmd_check(args: argparse.Namespace) -> int:
     d = date.fromisoformat(args.date) if args.date else date.today()
-    with PlaywrightPortal(_config(args)) as portal:
-        report = portal.check(d)
+    from .portal.session import LoginRequired
+
+    try:
+        with PlaywrightPortal(_config(args)) as portal:
+            report = portal.check(d)
+    except LoginRequired as exc:
+        report = {
+            "date": d.isoformat(),
+            "login": False,
+            "error": f"LOGIN_DIPERLUKAN ({exc})",
+        }
     _print(report)
+    if "LOGIN_DIPERLUKAN" in str(report.get("error", "")):
+        return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
     return 0 if report.get("login") and "error" not in report else EXIT_CODES[Status.GAGAL]
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Diagnostik kesehatan sistem lokal atau canary selector portal."""
+    if getattr(args, "portal", False):
+        d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+        from .portal.session import LoginRequired
+
+        try:
+            with PlaywrightPortal(_config(args)) as portal:
+                report = portal.check(d)
+        except LoginRequired as exc:
+            report = {
+                "date": d.isoformat(),
+                "login": False,
+                "error": f"LOGIN_DIPERLUKAN ({exc})",
+            }
+        except Exception as exc:  # noqa: BLE001
+            report = {
+                "date": d.isoformat(),
+                "login": False,
+                "error": f"GAGAL ({exc})",
+            }
+
+        if getattr(args, "json", False):
+            _print(report)
+        else:
+            print("=" * 60)
+            print(f"CANARY DIAGNOSTIK KESEHATAN PORTAL ({d.isoformat()})")
+            print("=" * 60)
+            login_status = (
+                "TERHUBUNG (VALID)" if report.get("login") else "BELUM LOGIN / SESI HABIS"
+            )
+            print(f"Status Autentikasi : {login_status}")
+            if report.get("status"):
+                print(f"Status Hari        : {report['status']} ({report.get('label', '')})")
+            if "location" in report:
+                print(
+                    f"Izin Lokasi        : {'BERHASIL' if report['location'] else 'GAGAL / DITOLAK'}"
+                )
+
+            selectors = report.get("selectors_health", {})
+            if selectors:
+                print("\nSTATUS KESEHATAN SELECTOR SEMANTIK:")
+                print("-" * 60)
+                for key, info in selectors.items():
+                    mark = "[PASS]" if info.get("healthy") else "[FAIL]"
+                    desc = info.get("description", key)
+                    cnt = info.get("count", 0)
+                    print(f"{mark} {desc:<45}: count={cnt}")
+                print("-" * 60)
+
+            if report.get("error"):
+                print(f"\nCATATAN KESALAHAN : {report['error']}")
+                if "LOGIN_DIPERLUKAN" in report["error"]:
+                    print("PANDUAN PERBAIKAN : Jalankan 'magang-portal login' untuk login ulang.")
+                else:
+                    print(
+                        "PANDUAN PERBAIKAN : Perbarui src/magang_log/portal/selectors.py sesuai snapshot DOM portal."
+                    )
+
+            all_ok = (
+                report.get("login")
+                and report.get("all_selectors_healthy", True)
+                and not report.get("error")
+            )
+            print(
+                "\nHASIL KESELURUHAN  : "
+                + ("SEMUA SEHAT & SIAP SUBMIT" if all_ok else "PERLU TINDAKAN")
+            )
+            print("=" * 60)
+
+        if "LOGIN_DIPERLUKAN" in str(report.get("error", "")):
+            return EXIT_CODES[Status.LOGIN_DIPERLUKAN]
+        return (
+            0
+            if report.get("login")
+            and "error" not in report
+            and report.get("all_selectors_healthy", True)
+            else EXIT_CODES[Status.GAGAL]
+        )
+
+    # Mode default: System Health Doctor Subsystem
+    from .doctor import Doctor, get_default_health_checks
+
+    config_path = getattr(args, "config", None)
+    doctor = Doctor(get_default_health_checks(config_path=config_path))
+    doc_report = doctor.run_checks()
+
+    if getattr(args, "json", False):
+        _print(doc_report.to_dict())
+    else:
+        print(doc_report.format_terminal())
+
+    return doc_report.exit_code
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
@@ -127,8 +264,15 @@ def cmd_gate(args: argparse.Namespace) -> int:
 def cmd_fill(args: argparse.Namespace) -> int:
     entry = _load_entry(Path(args.entry))
     with PlaywrightPortal(_config(args)) as portal:
-        result = portal.submit(entry, dry_run=True)
-    _print({"status": result.status, "note": result.note, "screenshots": result.screenshots})
+        result = portal.fill(entry)
+    _print(
+        {
+            "status": result.status,
+            "note": result.note,
+            "screenshots": result.screenshots,
+            "traces": result.traces,
+        }
+    )
     return EXIT_CODES[result.status]
 
 
@@ -146,8 +290,41 @@ def _confirm_interactively(entry: ApprovedEntry) -> ApprovedEntry | None:
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
-    entry = _load_entry(Path(args.entry))
-    if entry.approved_at is None:
+    dry_run = getattr(args, "dry_run", False)
+    entry_path = getattr(args, "entry", None)
+
+    if entry_path:
+        entry = _load_entry(Path(entry_path))
+    else:
+        d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+        db_path = getattr(args, "db", None) or "data/state.db"
+        store = LedgerStore(db_path=db_path)
+        entry_rec = store.get_entry(d)
+        if not entry_rec or not entry_rec.approved_json:
+            print(
+                f"Tidak ditemukan entri yang disetujui untuk tanggal {d.isoformat()}.",
+                file=sys.stderr,
+            )
+            print(
+                "Pastikan draf sudah disetujui lewat 'magang-log review' sebelum submit.",
+                file=sys.stderr,
+            )
+            return EXIT_CODES[Status.PERLU_TINDAKAN]
+        try:
+            data = json.loads(entry_rec.approved_json)
+            entry = ApprovedEntry(
+                work_date=d,
+                aktivitas=data.get("aktivitas", ""),
+                pembelajaran=data.get("pembelajaran", ""),
+                kendala=data.get("kendala", ""),
+                approved_at=entry_rec.approved_at or datetime.now(),
+                kehadiran=data.get("kehadiran", "Hadir"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Gagal memuat entri yang disetujui dari ledger: {exc}", file=sys.stderr)
+            return EXIT_CODES[Status.PERLU_TINDAKAN]
+
+    if not dry_run and entry.approved_at is None:
         if not sys.stdin.isatty():
             print("Entri belum disetujui (approved_at kosong) dan tidak ada terminal interaktif.")
             return EXIT_CODES[Status.PERLU_TINDAKAN]
@@ -157,11 +334,18 @@ def cmd_submit(args: argparse.Namespace) -> int:
         entry = confirmed
     try:
         with PlaywrightPortal(_config(args)) as portal:
-            result = portal.submit(entry)
+            result = portal.submit(entry, dry_run=dry_run)
     except NotApproved as exc:
         print(exc)
         return EXIT_CODES[Status.PERLU_TINDAKAN]
-    _print({"status": result.status, "note": result.note, "screenshots": result.screenshots})
+    _print(
+        {
+            "status": result.status,
+            "note": result.note,
+            "screenshots": result.screenshots,
+            "traces": result.traces,
+        }
+    )
     return EXIT_CODES[result.status]
 
 
@@ -228,18 +412,90 @@ def cmd_run(args: argparse.Namespace) -> int:
     auto_approve = bool(getattr(args, "auto_approve", False))
     approval = CliApprovalStage(auto_approve=auto_approve)
 
+    auto_approval_engine = None
+    if (
+        getattr(cfg.review, "auto_if_confident", False)
+        or getattr(cfg.review, "mode", "") == "auto_if_confident"
+    ):
+        from .reviewer import ConditionalAutoApprovalEngine
+
+        auto_approval_engine = ConditionalAutoApprovalEngine(
+            store=store,
+            config=cfg,
+            artifact_store=ArtifactStore(Path(getattr(args, "artifacts_dir", "data/runs"))),
+        )
+
+    notifier = None
+    if "toast" in getattr(cfg.notify, "channels", ["toast"]):
+        from .notify import WindowsToastNotifier
+
+        notify_on_success = bool(getattr(cfg.notify, "notify_on_success", False))
+        notifier = WindowsToastNotifier(notify_on_success=notify_on_success)
+
+    drafter_stage = None
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key and "PYTEST_CURRENT_TEST" not in os.environ:
+        from .drafter import DraftingStage, EvidenceDrafter, GeminiModelClient
+        from .validator import MultiStageValidator
+
+        client = GeminiModelClient(
+            api_key=api_key,
+            model=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+            temperature=getattr(cfg.llm, "temperature", 0.2),
+        )
+        evidence_drafter = EvidenceDrafter(
+            model_client=client,
+            model_name=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+        )
+        drafter_stage = DraftingStage(
+            drafter=evidence_drafter,
+            validator=MultiStageValidator(),
+        )
+
+    class CliCollectorStage:
+        def __init__(self, config: Any, store: LedgerStore) -> None:
+            self.config = config
+            self.store = store
+
+        def collect(self, target_date: date) -> list[EvidenceItem]:
+            from .collectors.factory import collect_and_sanitize_evidence
+            from .models import EvidenceItem
+
+            sanitized = collect_and_sanitize_evidence(target_date, self.config, self.store)
+            items: list[EvidenceItem] = []
+            for e in sanitized:
+                items.append(
+                    EvidenceItem(
+                        id=e.id,
+                        work_date=target_date,
+                        source=e.source,
+                        kind=e.kind,
+                        ts=e.ts,
+                        title=e.title,
+                        detail=e.detail,
+                        strength=e.strength,
+                    )
+                )
+            return items
+
     coordinator = PipelineCoordinator(
         store=store,
         preflight_gate=gate,
+        collector=CliCollectorStage(cfg, store),
+        drafter=drafter_stage,
         portal=portal,
         approval=approval,
         artifacts_dir=Path(getattr(args, "artifacts_dir", "data/runs")),
+        auto_approval_engine=auto_approval_engine,
+        notifier=notifier,
     )
+
+    resume_flag = bool(getattr(args, "resume", False)) or (getattr(args, "mode", None) == "resume")
 
     result = coordinator.run(
         target_date=d,
         dry_run=dry_run,
-        resume=bool(getattr(args, "resume", False)),
+        resume=resume_flag,
         force=bool(getattr(args, "force", False)),
     )
 
@@ -256,11 +512,725 @@ def cmd_run(args: argparse.Namespace) -> int:
         "error_code": result.error_code,
     }
     _print(payload)
+
+    if getattr(args, "mode", None) == "review" and result.status == Status.PERLU_REVIEW:
+        review_args = argparse.Namespace(**vars(args))
+        return cmd_review(review_args)
+
     return result.exit_code
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="magang-portal", description=__doc__)
+def cmd_export(args: argparse.Namespace) -> int:
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    from_date = date.fromisoformat(args.from_date) if getattr(args, "from_date", None) else None
+    to_date = date.fromisoformat(args.to_date) if getattr(args, "to_date", None) else None
+    output_path = getattr(args, "output", None) or "logbook.md"
+
+    out_file, count = export_logbook(
+        store=store,
+        output_path=output_path,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    payload = {
+        "status": "BERHASIL",
+        "output": str(out_file),
+        "entries_count": count,
+        "from_date": from_date.isoformat() if from_date else None,
+        "to_date": to_date.isoformat() if to_date else None,
+    }
+    _print(payload)
+    return 0
+
+
+def cmd_note(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    note = NoteRecord(
+        work_date=d,
+        kind=args.kind,
+        text=args.text,
+        created_at=datetime.now(),
+    )
+    note_id = store.add_note(note)
+
+    payload = {
+        "status": "BERHASIL",
+        "note_id": note_id,
+        "work_date": d.isoformat(),
+        "kind": args.kind,
+        "text": args.text,
+    }
+    _print(payload)
+    return 0
+
+
+def cmd_preview_payload(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    # 1. Jalankan kolektor aktif dan sanitasi privasi deterministik (100% offline)
+    sanitized_evidence = collect_and_sanitize_evidence(d, cfg, store)
+
+    # 2. Evaluasi kekuatan bukti
+    strength_res = evaluate_evidence_strength(sanitized_evidence)
+
+    # 3. Rakit finalized drafting payload dengan filter send_to_llm
+    payload = build_drafting_payload(d, sanitized_evidence, cfg)
+
+    # 4. Cetak metadata diagnostik human-readable & payload JSON
+    print("=" * 60)
+    print("DIAGNOSTIC METADATA - OFFLINE PAYLOAD PREVIEW")
+    print("=" * 60)
+    print(f"Tanggal Kerja  : {d.isoformat()}")
+    print(f"Total Bukti    : {strength_res.total_count}")
+    print(f"Bukti Kuat     : {strength_res.strong_count} (strong)")
+    print(f"Bukti Lemah    : {strength_res.weak_count} (weak)")
+    print(f"Keputusan Gate : {strength_res.decision}")
+    print(f"Alasan         : {strength_res.reason}")
+    if payload["metadata"]["excluded_sources"]:
+        print(
+            f"Sumber Dikecualikan: {', '.join(payload['metadata']['excluded_sources'])} "
+            "(via send_to_llm: false)"
+        )
+    print("=" * 60)
+    print("FINALIZED DRAFTING PAYLOAD (JSON)")
+    print("=" * 60)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    # Jika zero strong evidence, catat status PERLU_INPUT di ledger dan picu notifikasi
+    if not strength_res.passed:
+        send_system_notification(
+            title="Magang Log - Bukti Kurang",
+            message=(
+                f"Tidak ada bukti berkategori 'strong' untuk tanggal {d.isoformat()}. "
+                "Silakan tambahkan catatan manual."
+            ),
+            channels=cfg.notify.channels,
+        )
+        run_id = f"run-{d.strftime('%Y%m%d')}-preview"
+        store.record_run(
+            RunRecord(
+                run_id=run_id,
+                work_date=d,
+                stage="COLLECTED",
+                status=Status.PERLU_INPUT,
+                started_at=datetime.now(),
+                finished_at=datetime.now(),
+                error_code="INSUFFICIENT_EVIDENCE",
+            )
+        )
+        return 10
+
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    d = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+    artifacts_dir = Path(getattr(args, "artifacts_dir", None) or "data/runs")
+    artifact_store = ArtifactStore(artifacts_dir=artifacts_dir)
+
+    # 1. Cari draf dari SQLite store atau artifact_store
+    draft: LogEntryDraft | None = None
+    entry_rec = store.get_entry(d)
+    if entry_rec and entry_rec.draft_json:
+        try:
+            data = json.loads(entry_rec.draft_json)
+            if isinstance(data, dict):
+                if "work_date" not in data:
+                    data["work_date"] = d.isoformat()
+                draft = LogEntryDraft.model_validate(data)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            draft = None
+
+    if draft is None:
+        loaded = artifact_store.load_draft(d)
+        if loaded is not None:
+            if isinstance(loaded, LogEntryDraft):
+                draft = loaded
+            elif hasattr(loaded, "draft_json"):
+                try:
+                    data = json.loads(loaded.draft_json)
+                    if isinstance(data, dict):
+                        if "work_date" not in data:
+                            data["work_date"] = d.isoformat()
+                        draft = LogEntryDraft.model_validate(data)
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    draft = None
+
+    if draft is None:
+        print(f"Tidak ditemukan draf logbook untuk tanggal {d.isoformat()}.", file=sys.stderr)
+        print(
+            "Pastikan pipeline 'magang-log run' sudah dijalankan untuk menghasilkan draf.",
+            file=sys.stderr,
+        )
+        return EXIT_CODES[Status.PERLU_INPUT]
+
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+
+    # 2. Ambil bukti pendukung dan catatan
+    evidence = store.get_evidence(d)
+    notes = store.get_notes(d)
+    if not evidence:
+        from .collectors.factory import collect_and_sanitize_evidence
+        from .models import EvidenceItem
+
+        sanitized = collect_and_sanitize_evidence(d, cfg, store)
+        evidence = [
+            EvidenceItem(
+                id=e.id,
+                work_date=d,
+                source=e.source,
+                kind=e.kind,
+                ts=e.ts,
+                title=e.title,
+                detail=e.detail,
+                strength=e.strength,
+            )
+            for e in sanitized
+        ]
+
+    # 3. Ambil laporan validasi jika ada di artifact_store
+    validation = artifact_store.load_validation(d)
+
+    # 4. Inisialisasi ReviewSession
+    drafter_stage = None
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key and "PYTEST_CURRENT_TEST" not in os.environ:
+        from .drafter import DraftingStage, EvidenceDrafter, GeminiModelClient
+        from .validator import MultiStageValidator
+
+        client = GeminiModelClient(
+            api_key=api_key,
+            model=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+            temperature=getattr(cfg.llm, "temperature", 0.2),
+        )
+        evidence_drafter = EvidenceDrafter(
+            model_client=client,
+            model_name=getattr(cfg.llm, "model", "gemini-3.5-flash"),
+        )
+        drafter_stage = DraftingStage(
+            drafter=evidence_drafter,
+            validator=MultiStageValidator(),
+        )
+
+    session = ReviewSession(
+        store=store,
+        artifact_store=artifact_store,
+        drafter_stage=drafter_stage,
+    )
+
+    approved = session.review(
+        target_date=d,
+        draft=draft,
+        validation=validation,
+        evidence=evidence,
+        notes=notes,
+    )
+
+    if approved is not None:
+        return EXIT_CODES[Status.SUDAH_TERKIRIM]
+    return EXIT_CODES[Status.PERLU_REVIEW]
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Audit kalender dan status entri logbook beberapa hari terakhir (grid/tabel visual)."""
+    d_end = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    days_count = max(1, getattr(args, "days", 14))
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    cfg_path = Path(args.config) if getattr(args, "config", None) else None
+    cfg = load_config(cfg_path)
+    gate = PreflightGate.from_config_and_store(cfg, store)
+
+    dates = [d_end - timedelta(days=i) for i in reversed(range(days_count))]
+    items: list[dict[str, Any]] = []
+
+    badge_counts: dict[str, int] = {
+        "[TERKIRIM]": 0,
+        "[REVIEW]": 0,
+        "[INPUT]": 0,
+        "[LIBUR]": 0,
+        "[GAGAL]": 0,
+        "[BELUM_DIISI]": 0,
+    }
+
+    for d in dates:
+        day_name = INDONESIAN_DAY_NAMES[d.weekday()]
+        entry = store.get_entry(d)
+        runs = store.get_runs_for_date(d)
+
+        badge: str
+        keterangan: str
+
+        if entry and (
+            entry.verified_at
+            or entry.submitted_at
+            or (
+                entry.portal_status
+                and entry.portal_status in ("SUDAH_TERKIRIM", "BERHASIL", "TERKIRIM")
+            )
+        ):
+            badge = "[TERKIRIM]"
+            keterangan = "Terkirim ke portal"
+        elif entry and (entry.approved_at or entry.approved_json):
+            badge = "[REVIEW]"
+            keterangan = "Disetujui, siap submit"
+        elif entry and entry.draft_json:
+            badge = "[REVIEW]"
+            keterangan = "Draf tersedia, perlu review"
+        elif runs:
+            latest = runs[-1]
+            if latest.status in (Status.SUDAH_TERKIRIM, Status.BERHASIL):
+                badge = "[TERKIRIM]"
+                keterangan = "Terkirim / Berhasil"
+            elif latest.status == Status.PERLU_REVIEW:
+                badge = "[REVIEW]"
+                keterangan = "Menunggu review manusia"
+            elif latest.status == Status.PERLU_INPUT:
+                badge = "[INPUT]"
+                keterangan = "Bukti kurang, perlu input catatan"
+            elif latest.status == Status.LIBUR:
+                badge = "[LIBUR]"
+                keterangan = "Hari libur / non-kerja"
+            elif latest.status in (Status.GAGAL, Status.TERKUNCI, Status.CRASH):
+                badge = "[GAGAL]"
+                keterangan = f"Gagal ({latest.error_code or latest.status})"
+            else:
+                badge = f"[{latest.status}]"
+                keterangan = str(latest.status)
+        else:
+            gate_res = gate.calendar_gate.inspect(d)
+            if gate_res.decision == GateDecision.LIBUR:
+                badge = "[LIBUR]"
+                keterangan = gate_res.reason or "Hari libur / non-kerja"
+            elif d.weekday() >= 5:
+                badge = "[LIBUR]"
+                keterangan = "Akhir pekan"
+            else:
+                badge = "[BELUM_DIISI]"
+                keterangan = "Belum ada entri logbook"
+
+        if badge in badge_counts:
+            badge_counts[badge] += 1
+        elif badge.startswith("["):
+            badge_counts[badge] = badge_counts.get(badge, 0) + 1
+
+        items.append(
+            {
+                "date": d.isoformat(),
+                "day": day_name,
+                "badge": badge,
+                "status": keterangan,
+            }
+        )
+
+    if getattr(args, "json", False):
+        _print(items)
+        return 0
+
+    print("=" * 80)
+    print(f"AUDIT STATUS KALENDER LOGBOOK ({days_count} HARI TERAKHIR)")
+    print(f"Rentang: {dates[0].isoformat()} s/d {dates[-1].isoformat()}")
+    print("=" * 80)
+    print(f"{'TANGGAL':<12} {'HARI':<10} {'STATUS BADGE':<15} {'KETERANGAN'}")
+    print("-" * 80)
+    for it in items:
+        print(f"{it['date']:<12} {it['day']:<10} {it['badge']:<15} {it['status']}")
+    print("=" * 80)
+    print(
+        f"Ringkasan: {badge_counts['[TERKIRIM]']} Terkirim | "
+        f"{badge_counts['[REVIEW]']} Perlu Review | "
+        f"{badge_counts['[INPUT]']} Perlu Input | "
+        f"{badge_counts['[LIBUR]']} Libur | "
+        f"{badge_counts['[GAGAL]']} Gagal | "
+        f"{badge_counts['[BELUM_DIISI]']} Belum Diisi"
+    )
+    print("=" * 80)
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Menampilkan metrik keandalan operasional, statistik durasi p95, dan rasio edit."""
+    d_end = date.fromisoformat(args.date) if getattr(args, "date", None) else date.today()
+    days_count = max(1, getattr(args, "days", 20))
+    d_start = d_end - timedelta(days=days_count - 1)
+    db_path = getattr(args, "db", None) or "data/state.db"
+    store = LedgerStore(db_path=db_path)
+
+    all_runs = store.list_runs()
+    runs = [r for r in all_runs if d_start <= r.work_date <= d_end]
+
+    total_runs = len(runs)
+    successful_runs = sum(1 for r in runs if r.status in (Status.BERHASIL, Status.SUDAH_TERKIRIM))
+    failed_runs = sum(1 for r in runs if r.status in (Status.GAGAL, Status.CRASH, Status.TERKUNCI))
+    success_rate = round((successful_runs / total_runs * 100.0), 1) if total_runs > 0 else 0.0
+
+    durations = [float(r.duration_ms) for r in runs if r.duration_ms > 0]
+    avg_duration_ms = round(sum(durations) / len(durations), 1) if durations else 0.0
+    p50_duration_ms = calculate_median(durations)
+    p95_duration_ms = calculate_percentile(durations, 95.0)
+
+    tokens_in = sum(r.tokens_in for r in runs)
+    tokens_out = sum(r.tokens_out for r in runs)
+    total_tokens = tokens_in + tokens_out
+
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT edit_ratio, work_date FROM entries WHERE work_date >= ? AND work_date <= ?;",
+            (d_start.isoformat(), d_end.isoformat()),
+        ).fetchall()
+
+    edit_ratios = [float(r["edit_ratio"]) for r in rows if r["edit_ratio"] is not None]
+    median_edit_ratio = calculate_median(edit_ratios)
+    avg_edit_ratio = round(sum(edit_ratios) / len(edit_ratios), 2) if edit_ratios else 0.0
+
+    metrics = {
+        "days": days_count,
+        "from_date": d_start.isoformat(),
+        "to_date": d_end.isoformat(),
+        "total_runs": total_runs,
+        "successful_runs": successful_runs,
+        "failed_runs": failed_runs,
+        "success_rate_pct": success_rate,
+        "durations_ms": {
+            "avg": avg_duration_ms,
+            "p50": p50_duration_ms,
+            "p95": p95_duration_ms,
+        },
+        "tokens": {
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "total": total_tokens,
+        },
+        "edit_ratio": {
+            "median": median_edit_ratio,
+            "avg": avg_edit_ratio,
+            "count": len(edit_ratios),
+        },
+        "total_entries": len(rows),
+    }
+
+    if getattr(args, "json", False):
+        _print(metrics)
+        return 0
+
+    print("=" * 80)
+    print(f"OPERATIONAL RELIABILITY REPORT ({days_count} HARI TERAKHIR)")
+    print(f"Rentang Tanggal: {d_start.isoformat()} s/d {d_end.isoformat()}")
+    print("=" * 80)
+    print("METRIK EKSEKUSI PIPELINE:")
+    print(f"  Total Eksekusi       : {total_runs}")
+    print(f"  Berhasil / Terkirim  : {successful_runs}")
+    print(f"  Gagal / Terkunci     : {failed_runs}")
+    print(f"  Tingkat Keberhasilan : {success_rate:.1f}%")
+    print("\nDURASI OPERASIONAL (ms):")
+    print(f"  Rata-rata Durasi     : {avg_duration_ms:.1f} ms")
+    print(f"  Median (p50)         : {p50_duration_ms:.1f} ms")
+    print(f"  95th Percentile (p95): {p95_duration_ms:.1f} ms")
+    print("\nKONSUMSI TOKEN LLM:")
+    print(f"  Tokens Masuk (Prompt): {tokens_in:,}")
+    print(f"  Tokens Keluar (Draft): {tokens_out:,}")
+    print(f"  Total Token          : {total_tokens:,}")
+    print("\nKUALITAS DRAF (EDIT RATIO):")
+    print(f"  Median Edit Ratio    : {median_edit_ratio:.2f}")
+    print(f"  Rata-rata Edit Ratio : {avg_edit_ratio:.2f}")
+    print(f"  Total Entri Terdok.  : {len(rows)} entri ({len(edit_ratios)} dengan metrik edit)")
+    print("=" * 80)
+    return 0
+
+
+def cmd_profile_list(args: argparse.Namespace) -> int:
+    """Menampilkan daftar pustaka preset profil kerja (WorkProfile) bawaan secara offline."""
+    import json
+
+    from .workprofile import load_presets
+
+    try:
+        presets = load_presets()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat pustaka preset: %s", exc)
+        print(f"Error memuat pustaka preset: {exc}")
+        return 1
+
+    if getattr(args, "json", False):
+        payload = [p.model_dump() for p in presets]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("=" * 80)
+    print("                   PUSTAKA PRESET PROFIL KERJA (WORKPROFILE)                   ")
+    print("=" * 80)
+    for p in presets:
+        print(f"\n* Profil: {p.profile_name}")
+        if p.natural_description:
+            print(f"  Deskripsi   : {p.natural_description}")
+        app_names = [app.name for app in p.applications]
+        print(f"  Aplikasi    : {', '.join(app_names) if app_names else '(tidak ada)'}")
+        exts = sorted(p.all_file_extensions())
+        print(f"  Ekstensi    : {', '.join(exts) if exts else '(tidak ada)'}")
+        print(
+            f"  Domain Web  : {', '.join(p.browser_domains) if p.browser_domains else '(tidak ada)'}"
+        )
+
+    print("\nTip: Gunakan preset di atas dalam konfigurasi `sources.app.work_profile` Anda.")
+    return 0
+
+
+def cmd_profile_show(args: argparse.Namespace) -> int:
+    """Menampilkan detail WorkProfile yang saat ini aktif dalam konfigurasi aplikasi."""
+    import json
+
+    from .settings import load_config, sync_work_profile_browser_domains
+
+    try:
+        cfg = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat konfigurasi: %s", exc)
+        print(f"Error memuat konfigurasi: {exc}")
+        return 1
+
+    profile = cfg.sources.app.work_profile or getattr(cfg, "work_profile", None)
+    if profile is not None:
+        sync_work_profile_browser_domains(cfg, profile)
+
+    if getattr(args, "json", False):
+        payload = profile.model_dump() if profile else None
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if profile is None:
+        print("Status WorkProfile: TIDAK AKTIF (belum dikonfigurasi).")
+        print("Gunakan 'magang-log profile list' untuk melihat daftar preset yang tersedia.")
+        return 0
+
+    print("=" * 80)
+    print(f"               PROFIL KERJA AKTIF: {profile.profile_name.upper()}              ")
+    print("=" * 80)
+    if profile.natural_description:
+        print(f"Deskripsi Kegiatan : {profile.natural_description}")
+    print(f"Sumber AppActivity : {'Aktif' if cfg.sources.app.enabled else 'Nonaktif'}")
+    print("\nAplikasi yang Dipantau:")
+    for app in profile.applications:
+        exts = ", ".join(app.file_extensions) if app.file_extensions else "-"
+        procs = ", ".join(app.process_names) if app.process_names else "-"
+        logs = ", ".join(app.log_patterns) if app.log_patterns else "-"
+        print(f"  - {app.name}")
+        print(f"      Ekstensi File : {exts}")
+        print(f"      Proses Biner  : {procs}")
+        print(f"      Pola Log      : {logs}")
+
+    synced_domains = cfg.sources.get_browser().get_allowlist()
+    print(f"\nDomain Browser Tersinkronisasi ({len(synced_domains)} domain):")
+    for d in synced_domains:
+        print(f"  * {d}")
+
+    return 0
+
+
+def cmd_preview_evidence(args: argparse.Namespace) -> int:
+    """Menampilkan preview bukti aktivitas yang terkumpul tanpa menjalankan alur submisi."""
+    import json
+    from datetime import date, datetime
+
+    from .collectors.base import run_collectors
+    from .collectors.factory import create_collectors
+    from .settings import load_config
+    from .store import LedgerStore
+
+    try:
+        cfg = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Gagal memuat konfigurasi: %s", exc)
+        print(f"Error memuat konfigurasi: {exc}")
+        return 1
+
+    store = LedgerStore(db_path=args.db or "data/state.db")
+
+    target_date = (
+        date.fromisoformat(args.date) if getattr(args, "date", None) else datetime.now().date()
+    )
+
+    collectors = create_collectors(cfg, store)
+    source_filter = getattr(args, "source", "all")
+    if source_filter and source_filter != "all":
+        collectors = [
+            c for c in collectors if getattr(c, "name", c.__class__.__name__) == source_filter
+        ]
+
+    evidence_items = run_collectors(collectors, target_date)
+
+    if getattr(args, "json", False):
+        payload = [
+            {
+                "id": ev.id,
+                "source": ev.source,
+                "kind": ev.kind,
+                "strength": ev.strength,
+                "title": ev.title,
+                "detail": ev.detail,
+                "ts": ev.ts.isoformat(),
+                "work_date": ev.work_date.isoformat() if ev.work_date else None,
+            }
+            for ev in evidence_items
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("=" * 80)
+    print(f"          PREVIEW BUKTI AKTIVITAS TANGGAL: {target_date.isoformat()}           ")
+    print(
+        f"          Filter Sumber: {source_filter.upper()} | Ditemukan: {len(evidence_items)} item"
+    )
+    print("=" * 80)
+
+    if not evidence_items:
+        print("\nTidak ada bukti aktivitas yang ditemukan untuk kriteria di atas.")
+        return 0
+
+    print(f"\n{'ID':<12} | {'SUMBER':<8} | {'KEKUATAN':<8} | {'JENIS':<16} | {'JUDUL AKTIVITAS'}")
+    print("-" * 80)
+    for ev in evidence_items:
+        strength_badge = "[STRONG]" if ev.strength == "strong" else "[WEAK]  "
+        print(f"{ev.id:<12} | {ev.source:<8} | {strength_badge} | {ev.kind:<16} | {ev.title}")
+        if ev.detail:
+            print(f"             Detail: {ev.detail}")
+
+    return 0
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    """Meluncurkan server lokal FastAPI dan aplikasi desktop Magang Log (LocalDashboard)."""
+    from .server.lifecycle import launch_server_and_desktop
+
+    return launch_server_and_desktop(
+        view="dashboard",
+        host=getattr(args, "host", "127.0.0.1"),
+        port=getattr(args, "port", 8000),
+        exe_path=getattr(args, "exe", None),
+        server_only=bool(getattr(args, "server_only", False)),
+    )
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Meluncurkan server lokal FastAPI dan wizard onboarding desktop Magang Log (SetupWizard)."""
+    from .server.lifecycle import launch_server_and_desktop
+
+    return launch_server_and_desktop(
+        view="setup",
+        host=getattr(args, "host", "127.0.0.1"),
+        port=getattr(args, "port", 8000),
+        exe_path=getattr(args, "exe", None),
+        server_only=bool(getattr(args, "server_only", False)),
+    )
+
+
+@dataclass
+class CliResult:
+    """Hasil eksekusi terisolasi perintah CLI."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    output: str
+    exception: BaseException | None = None
+
+
+class CliRunner:
+    """Helper untuk menjalankan dan menguji CLI secara terisolasi tanpa subproses eksternal."""
+
+    def invoke(
+        self,
+        app: Any = None,
+        args: list[str] | None = None,
+        input: str | None = None,
+        env: dict[str, str] | None = None,
+        catch_exceptions: bool = True,
+    ) -> CliResult:
+        import os
+        from unittest.mock import patch
+
+        if isinstance(app, (list, tuple)):
+            args = list(app)
+            app = main
+        elif app is None:
+            app = main
+
+        args = list(args) if args is not None else []
+
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        stdin_buf = io.StringIO(input) if input is not None else io.StringIO()
+
+        exit_code = 0
+        caught_exc: BaseException | None = None
+
+        env_patcher = patch.dict(os.environ, env) if env else None
+        if env_patcher:
+            env_patcher.start()
+
+        orig_stdout, orig_stderr, orig_stdin = sys.stdout, sys.stderr, sys.stdin
+        sys.stdout, sys.stderr, sys.stdin = stdout_buf, stderr_buf, stdin_buf
+
+        try:
+            if callable(app):
+                exit_code = app(args)
+            elif isinstance(app, argparse.ArgumentParser):
+                parsed = app.parse_args(args)
+                if hasattr(parsed, "func"):
+                    ret = parsed.func(parsed)
+                    if isinstance(ret, (Status, str)):
+                        exit_code = get_exit_code(ret)
+                    else:
+                        exit_code = int(ret or 0)
+                else:
+                    exit_code = 0
+            else:
+                exit_code = main(args)
+        except SystemExit as exc:
+            if isinstance(exc.code, int):
+                exit_code = exc.code
+            elif exc.code is None:
+                exit_code = 0
+            else:
+                exit_code = 1
+                stderr_buf.write(str(exc.code))
+        except BaseException as exc:
+            caught_exc = exc
+            if not catch_exceptions:
+                raise
+            exit_code = 1
+            stderr_buf.write(f"Exception: {exc}\n")
+        finally:
+            sys.stdout, sys.stderr, sys.stdin = orig_stdout, orig_stderr, orig_stdin
+            if env_patcher:
+                env_patcher.stop()
+
+        stdout_str = stdout_buf.getvalue()
+        stderr_str = stderr_buf.getvalue()
+        output_str = stdout_str + stderr_str
+
+        return CliResult(
+            exit_code=exit_code if exit_code is not None else 0,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            output=output_str,
+            exception=caught_exc,
+        )
+
+
+def build_parser(prog: str = "magang-log") -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--base-url", help="default: portal MagangHub (halaman Riwayat)")
     common.add_argument("--auth-state", default="data/auth/state.json")
@@ -273,6 +1243,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless", action="store_true", help="tanpa jendela (uji dulu lewat `check`)"
     )
     common.add_argument("--config", help="path file konfigurasi YAML (default: config/config.yaml)")
+    common.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="tampilkan detail error & stack trace lengkap saat terjadi kesalahan",
+    )
+
+    parser = argparse.ArgumentParser(prog=prog, parents=[common], description=__doc__)
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("login", parents=[common], help="login manual sekali, simpan sesi").set_defaults(
@@ -286,6 +1265,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
     p.add_argument(
+        "--mode",
+        choices=["review", "resume"],
+        help="mode eksekusi pipeline: review (buka interaktif review) | resume (pulihkan dari checkpoint)",
+    )
+    p.add_argument(
         "--dry-run", action="store_true", help="jalankan simulasi dry-run tanpa submit final"
     )
     p.add_argument(
@@ -297,6 +1281,80 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--auto-approve", action="store_true", help="setujui draf otomatis (pengetesan)")
     p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser(
+        "export",
+        parents=[common],
+        help="ekspor entri logbook yang disetujui ke file Markdown UTF-8 bersih",
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        default="logbook.md",
+        help="path output file markdown (default: logbook.md)",
+    )
+    p.add_argument(
+        "--from",
+        dest="from_date",
+        help="filter batas awal tanggal (YYYY-MM-DD)",
+    )
+    p.add_argument(
+        "--to",
+        dest="to_date",
+        help="filter batas akhir tanggal (YYYY-MM-DD)",
+    )
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser(
+        "note",
+        parents=[common],
+        help="tambahkan catatan refleksi manual harian (aktivitas, pembelajaran, kendala)",
+    )
+    p.add_argument("text", help="isi catatan refleksi")
+    p.add_argument(
+        "--type",
+        "--kind",
+        dest="kind",
+        required=True,
+        choices=["aktivitas", "pembelajaran", "kendala"],
+        help="kategori catatan: aktivitas | pembelajaran | kendala",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_note)
+
+    p = sub.add_parser(
+        "status",
+        parents=[common],
+        help="audit kalender dan status entri logbook beberapa hari terakhir (grid/tabel visual)",
+    )
+    p.add_argument(
+        "--days",
+        type=int,
+        default=14,
+        help="jumlah hari ke belakang untuk diaudit (default: 14)",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD batas akhir audit (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser(
+        "report",
+        parents=[common],
+        help="tampilkan metrik keandalan operasional, statistik durasi p95, dan rasio edit",
+    )
+    p.add_argument(
+        "--days",
+        type=int,
+        default=20,
+        help="jumlah hari ke belakang untuk dihitung metriknya (default: 20)",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD batas akhir metrik (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser(
         "gate",
@@ -320,9 +1378,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser(
+        "doctor",
+        parents=[common],
+        help="diagnostik kesehatan sistem & canary selector portal (doctor --portal)",
+    )
+    p.add_argument(
+        "--portal",
+        action="store_true",
+        default=False,
+        help="uji kesehatan canary selector portal",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser(
         "fill", parents=[common], help="DRY-RUN: isi kolom, tidak mencentang/mengirim"
     )
     p.add_argument("--entry", required=True, help="file JSON entri")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="flag eksplisit dry-run (selalu aktif pada fill)",
+    )
     p.set_defaults(func=cmd_fill)
 
     p = sub.add_parser(
@@ -330,14 +1410,160 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="isi, centang pernyataan setelah Anda setuju, kirim, verifikasi",
     )
-    p.add_argument("--entry", required=True, help="file JSON entri")
+    p.add_argument(
+        "--entry",
+        help="file JSON entri (opsional, jika kosong dimuat otomatis dari ledger)",
+    )
+    p.add_argument(
+        "--date",
+        help="YYYY-MM-DD (default: hari ini, bila --entry tidak dispesifikasikan)",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="DRY-RUN: isi kolom dan verifikasi tanpa mencentang atau mengirim",
+    )
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
     p.set_defaults(func=cmd_submit)
+
+    p = sub.add_parser(
+        "preview-payload",
+        parents=[common],
+        help="preview offline payload JSON yang akan dikirim ke LLM dan diagnostik gate kekuatan bukti",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_preview_payload)
+
+    p = sub.add_parser(
+        "review",
+        parents=[common],
+        help="tinjau draf logbook interaktif (approve [Y], edit di $EDITOR [E], regenerate [R], skip [S])",
+    )
+    p.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p.set_defaults(func=cmd_review)
+
+    # Subcommand: profile
+    p_profile = sub.add_parser(
+        "profile",
+        parents=[common],
+        help="inspeksi dan kelola profil kerja magang (WorkProfile)",
+    )
+    p_profile_sub = p_profile.add_subparsers(dest="profile_action")
+    p_profile_list = p_profile_sub.add_parser(
+        "list",
+        parents=[common],
+        help="daftar seluruh pustaka preset profil kerja bawaan",
+    )
+    p_profile_list.add_argument(
+        "--json", action="store_true", help="tampilkan hasil dalam format JSON"
+    )
+    p_profile_list.set_defaults(func=cmd_profile_list)
+
+    p_profile_show = p_profile_sub.add_parser(
+        "show",
+        parents=[common],
+        help="tampilkan profil kerja aktif saat ini",
+    )
+    p_profile_show.add_argument(
+        "--json", action="store_true", help="tampilkan hasil dalam format JSON"
+    )
+    p_profile_show.set_defaults(func=cmd_profile_show)
+    p_profile.set_defaults(func=cmd_profile_show)
+
+    # Subcommand: preview-evidence
+    p_prev = sub.add_parser(
+        "preview-evidence",
+        parents=[common],
+        help="preview pengumpulan bukti aktivitas tanpa menjalankan alur submisi",
+    )
+    p_prev.add_argument(
+        "--source",
+        choices=["all", "app", "git", "notes", "browser"],
+        default="all",
+        help="filter sumber bukti yang ingin dikumpulkan (default: all)",
+    )
+    p_prev.add_argument("--date", help="YYYY-MM-DD (default: hari ini)")
+    p_prev.add_argument("--json", action="store_true", help="tampilkan hasil dalam format JSON")
+    p_prev.add_argument("--db", help="path database SQLite (default: data/state.db)")
+    p_prev.set_defaults(func=cmd_preview_evidence)
+
+    # Subcommand: ui
+    p_ui = sub.add_parser(
+        "ui",
+        parents=[common],
+        help="buka antarmuka desktop Magang Log (LocalDashboard)",
+    )
+    p_ui.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="port server lokal FastAPI (default: 8000)",
+    )
+    p_ui.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="host binding server lokal (harus loopback 127.0.0.1)",
+    )
+    p_ui.add_argument(
+        "--exe",
+        help="path kustom ke file executable desktop MagangLogPortal.exe",
+    )
+    p_ui.add_argument(
+        "--server-only",
+        action="store_true",
+        help="jalankan server backend saja tanpa meluncurkan GUI desktop",
+    )
+    p_ui.set_defaults(func=cmd_ui)
+
+    # Subcommand: setup
+    p_setup = sub.add_parser(
+        "setup",
+        parents=[common],
+        help="buka wizard onboarding desktop Magang Log (SetupWizard)",
+    )
+    p_setup.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="port server lokal FastAPI (default: 8000)",
+    )
+    p_setup.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="host binding server lokal (harus loopback 127.0.0.1)",
+    )
+    p_setup.add_argument(
+        "--exe",
+        help="path kustom ke file executable desktop MagangLogPortal.exe",
+    )
+    p_setup.add_argument(
+        "--server-only",
+        action="store_true",
+        help="jalankan server backend saja tanpa meluncurkan GUI desktop",
+    )
+    p_setup.set_defaults(func=cmd_setup)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    verbose = bool(getattr(args, "verbose", False))
+    try:
+        ret = args.func(args)
+        if isinstance(ret, (Status, str)):
+            return get_exit_code(ret)
+        return int(ret or 0)
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_CODES[Status.CRASH]
 
 
 if __name__ == "__main__":

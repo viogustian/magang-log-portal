@@ -11,7 +11,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+from .drafter.models import LogEntryDraft
+from .drafter.stage import DraftingStage
 from .gates import GateDecision, PreflightGate, generate_run_id
+from .logger import StructuredLogger
 from .models import (
     EXIT_CODES,
     ApprovedEntry,
@@ -22,6 +25,7 @@ from .models import (
     RunRecord,
     Status,
 )
+from .notify import Notifier
 from .store import LedgerStore
 
 
@@ -113,7 +117,7 @@ class DraftResult:
 
     draft_json: str
     prompt_version: str = "v2"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"
     tokens_in: int = 0
     tokens_out: int = 0
 
@@ -126,6 +130,8 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     validated_payload: dict[str, Any] | None = None
+    grounding_score: float = 1.0
+    detected_filler: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -267,14 +273,27 @@ class ArtifactStore:
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
-    def save_draft(self, target_date: date, draft: DraftResult) -> Path:
+    def save_draft(self, target_date: date, draft: DraftResult | LogEntryDraft) -> Path:
         path = self._date_dir(target_date) / "draft.json"
+        if isinstance(draft, LogEntryDraft):
+            draft_json_str = draft.model_dump_json()
+            prompt_ver = getattr(draft, "prompt_version", "v1")
+            mod = getattr(draft, "model", "gemini-3.5-flash")
+            tok_in = 0
+            tok_out = 0
+        else:
+            draft_json_str = draft.draft_json
+            prompt_ver = draft.prompt_version
+            mod = draft.model
+            tok_in = draft.tokens_in
+            tok_out = draft.tokens_out
+
         data = {
-            "draft_json": draft.draft_json,
-            "prompt_version": draft.prompt_version,
-            "model": draft.model,
-            "tokens_in": draft.tokens_in,
-            "tokens_out": draft.tokens_out,
+            "draft_json": draft_json_str,
+            "prompt_version": prompt_ver,
+            "model": mod,
+            "tokens_in": tok_in,
+            "tokens_out": tok_out,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -288,7 +307,7 @@ class ArtifactStore:
             return DraftResult(
                 draft_json=data["draft_json"],
                 prompt_version=data.get("prompt_version", "v2"),
-                model=data.get("model", "gemini-2.5-flash"),
+                model=data.get("model", "gemini-3.5-flash"),
                 tokens_in=data.get("tokens_in", 0),
                 tokens_out=data.get("tokens_out", 0),
             )
@@ -301,7 +320,9 @@ class ArtifactStore:
             "is_valid": validation.is_valid,
             "errors": validation.errors,
             "warnings": validation.warnings,
-            "validated_payload": validation.validated_payload,
+            "validated_payload": getattr(validation, "validated_payload", None),
+            "grounding_score": getattr(validation, "grounding_score", None),
+            "detected_filler": getattr(validation, "detected_filler", None),
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -312,11 +333,14 @@ class ArtifactStore:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            grounding = data.get("grounding_score")
             return ValidationResult(
                 is_valid=data["is_valid"],
                 errors=data.get("errors", []),
                 warnings=data.get("warnings", []),
                 validated_payload=data.get("validated_payload"),
+                grounding_score=float(grounding) if grounding is not None else 1.0,
+                detected_filler=data.get("detected_filler") or [],
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
@@ -330,6 +354,8 @@ class ArtifactStore:
             "kendala": entry.kendala,
             "approved_at": entry.approved_at.isoformat() if entry.approved_at else None,
             "kehadiran": entry.kehadiran,
+            "edit_ratio": entry.edit_ratio,
+            "content_hash": entry.content_hash,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
@@ -348,6 +374,8 @@ class ArtifactStore:
                 kendala=data["kendala"],
                 approved_at=datetime.fromisoformat(approved_at) if approved_at else None,
                 kehadiran=data.get("kehadiran", "Hadir"),
+                edit_ratio=float(data.get("edit_ratio", 0.0)),
+                content_hash=data.get("content_hash", ""),
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
@@ -366,6 +394,9 @@ class PipelineCoordinator:
         approval: ApprovalStage | None = None,
         portal: PortalStage | None = None,
         artifacts_dir: Path | None = None,
+        auto_approval_engine: Any | None = None,
+        logger: StructuredLogger | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.store = store
         self.preflight_gate = preflight_gate
@@ -374,7 +405,15 @@ class PipelineCoordinator:
         self.validator = validator
         self.approval = approval
         self.portal = portal
-        self.artifact_store = ArtifactStore(artifacts_dir or Path("data/runs"))
+        self.artifacts_dir = artifacts_dir or Path("data/runs")
+        self.artifact_store = ArtifactStore(self.artifacts_dir)
+        self.auto_approval_engine = auto_approval_engine
+        self.notifier = notifier
+        if logger is not None:
+            self.logger: StructuredLogger | None = logger
+        else:
+            log_dir = self.artifacts_dir.parent / "logs"
+            self.logger = StructuredLogger(log_file=log_dir / "magang-log.jsonl")
 
     def _record_audit_run(
         self,
@@ -403,6 +442,37 @@ class PipelineCoordinator:
                 error_code=error_code,
             )
         )
+        if self.logger is not None:
+            level = (
+                "ERROR"
+                if status in (Status.GAGAL, Status.TERKUNCI, Status.CRASH)
+                else (
+                    "WARNING"
+                    if status in (Status.PERLU_REVIEW, Status.PERLU_INPUT, Status.LOGIN_DIPERLUKAN)
+                    else "INFO"
+                )
+            )
+            try:
+                self.logger.log_event(
+                    run_id=run_id,
+                    work_date=target_date,
+                    stage=stage.value if hasattr(stage, "value") else str(stage),
+                    status=status,
+                    duration_ms=duration_ms,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    error_code=error_code,
+                    level=level,
+                )
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+        if self.notifier is not None:
+            try:
+                self.notifier.notify(status=status, work_date=target_date)
+            except Exception:  # noqa: BLE001, S110
+                pass
+
         return duration_ms
 
     def run(
@@ -492,6 +562,15 @@ class PipelineCoordinator:
                     tokens_out=tokens_out,
                     error_code="INSUFFICIENT_EVIDENCE",
                 )
+                from .notify import send_system_notification
+
+                send_system_notification(
+                    title="Magang Log - Bukti Kurang",
+                    message=(
+                        f"Tidak ada bukti berkategori 'strong' untuk tanggal {target_date.isoformat()}. "
+                        "Butuh catatan input pengguna."
+                    ),
+                )
                 return PipelineResult(
                     run_id=run_id,
                     target_date=target_date,
@@ -514,48 +593,133 @@ class PipelineCoordinator:
                 draft = self.artifact_store.load_draft(target_date)
 
             if draft is None:
-                if self.drafter is not None:
+                if self.drafter is not None and isinstance(self.drafter, DraftingStage):
+                    notes = self.store.get_notes(target_date)
+                    stage_res = self.drafter.draft_and_validate(
+                        target_date=target_date,
+                        evidence=evidence,
+                        notes=notes,
+                        artifacts_dir=self.artifacts_dir,
+                    )
+                    tokens_in += stage_res.tokens_in
+                    tokens_out += stage_res.tokens_out
+                    artifacts.update(stage_res.artifacts)
+
+                    draft_json = stage_res.draft.model_dump_json(indent=2)
+                    draft = DraftResult(
+                        draft_json=draft_json,
+                        prompt_version=stage_res.draft.prompt_version,
+                        model=stage_res.draft.model,
+                        tokens_in=stage_res.tokens_in,
+                        tokens_out=stage_res.tokens_out,
+                    )
+                    artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
+
+                    draft_hash = compute_content_hash(draft.draft_json)
+                    self.store.save_entry(
+                        EntryRecord(
+                            work_date=target_date,
+                            draft_json=draft.draft_json,
+                            prompt_version=draft.prompt_version,
+                            model=draft.model,
+                            content_hash=draft_hash,
+                        )
+                    )
+
+                    validation = ValidationResult(
+                        is_valid=stage_res.validation.is_valid,
+                        errors=stage_res.validation.errors,
+                        warnings=stage_res.validation.warnings,
+                        validated_payload=stage_res.draft.model_dump(mode="json"),
+                        grounding_score=getattr(stage_res.validation, "grounding_score", 1.0),
+                        detected_filler=getattr(stage_res.validation, "detected_filler", []),
+                    )
+                    artifacts["validation"] = self.artifact_store.save_validation(
+                        target_date, validation
+                    )
+
+                    if not stage_res.is_valid:
+                        sm.transition_to(PipelineState.PERLU_REVIEW)
+                        dur = self._record_audit_run(
+                            run_id,
+                            target_date,
+                            PipelineState.DRAFTED,
+                            Status.PERLU_REVIEW,
+                            started_at,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            error_code="VALIDATION_FAILED",
+                        )
+                        return PipelineResult(
+                            run_id=run_id,
+                            target_date=target_date,
+                            final_state=PipelineState.PERLU_REVIEW,
+                            status=Status.PERLU_REVIEW,
+                            exit_code=EXIT_CODES[Status.PERLU_REVIEW],
+                            duration_ms=dur,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            error_code="VALIDATION_FAILED",
+                            note=f"Validasi draf belum lolos setelah percobaan retry: {'; '.join(stage_res.validation.errors)}",
+                            artifacts=artifacts,
+                        )
+
+                    sm.transition_to(PipelineState.VALIDATED)
+                elif self.drafter is not None:
                     notes = self.store.get_notes(target_date)
                     draft = self.drafter.draft(target_date, evidence, notes)
                 else:
                     # Draf fallback minimal jika drafter belum disuplai
                     sample_json = json.dumps(
                         {
-                            "aktivitas": f"Mengerjakan aktivitas harian tanggal {target_date.isoformat()}.",
-                            "pembelajaran": "Memahami arsitektur pipeline dan validasi logbook.",
-                            "kendala": "Tidak ada kendala yang berarti selama pengerjaan.",
+                            "aktivitas": (
+                                f"Mengerjakan aktivitas harian tanggal {target_date.isoformat()} dengan "
+                                "mengimplementasikan fitur-fitur dan pengujian sistem agar berjalan dengan baik dan stabil."
+                            ),
+                            "pembelajaran": (
+                                "Memahami arsitektur pipeline, siklus kerja pengumpulan bukti aktivitas, "
+                                "serta mekanisme validasi aturan logbook secara menyeluruh dan terstruktur."
+                            ),
+                            "kendala": (
+                                "Tidak ada kendala yang berarti selama pelaksanaan aktivitas dan seluruh "
+                                "proses berjalan lancar sesuai rencana kerja yang telah ditentukan."
+                            ),
                         }
                     )
                     draft = DraftResult(draft_json=sample_json)
 
-            tokens_in += draft.tokens_in
-            tokens_out += draft.tokens_out
-            artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
+            if "draft" not in artifacts and draft is not None:
+                tokens_in += draft.tokens_in
+                tokens_out += draft.tokens_out
+                artifacts["draft"] = self.artifact_store.save_draft(target_date, draft)
 
-            # Catat draf ke ledger entri awal
-            draft_hash = compute_content_hash(draft.draft_json)
-            self.store.save_entry(
-                EntryRecord(
-                    work_date=target_date,
-                    draft_json=draft.draft_json,
-                    prompt_version=draft.prompt_version,
-                    model=draft.model,
-                    content_hash=draft_hash,
+                # Catat draf ke ledger entri awal
+                draft_hash = compute_content_hash(draft.draft_json)
+                self.store.save_entry(
+                    EntryRecord(
+                        work_date=target_date,
+                        draft_json=draft.draft_json,
+                        prompt_version=draft.prompt_version,
+                        model=draft.model,
+                        content_hash=draft_hash,
+                    )
                 )
-            )
 
             # 4. Validasi Draf: DRAFTED -> VALIDATED / PERLU_REVIEW / VALIDATION_FAILED
-            validation: ValidationResult | None = None
-            if resume:
-                validation = self.artifact_store.load_validation(target_date)
+            if sm.current_state != PipelineState.VALIDATED:
+                validation: ValidationResult | None = None
+                if resume:
+                    validation = self.artifact_store.load_validation(target_date)
 
-            if validation is None:
-                if self.validator is not None:
-                    validation = self.validator.validate(draft, target_date)
-                else:
-                    validation = ValidationResult(is_valid=True)
+                if validation is None:
+                    if self.validator is not None:
+                        validation = self.validator.validate(draft, target_date)
+                    else:
+                        validation = ValidationResult(is_valid=True)
 
-            artifacts["validation"] = self.artifact_store.save_validation(target_date, validation)
+                artifacts["validation"] = self.artifact_store.save_validation(
+                    target_date, validation
+                )
 
             if not validation.is_valid:
                 # Periksa apakah ini kegagalan validasi total atau perlu review manusia
@@ -585,12 +749,29 @@ class PipelineCoordinator:
                     artifacts=artifacts,
                 )
 
-            sm.transition_to(PipelineState.VALIDATED)
+            if sm.current_state != PipelineState.VALIDATED:
+                sm.transition_to(PipelineState.VALIDATED)
 
             # 5. VALIDATED -> APPROVED / PERLU_REVIEW
             approved_entry: ApprovedEntry | None = None
             if resume:
                 approved_entry = self.artifact_store.load_approval(target_date)
+
+            if approved_entry is None and self.auto_approval_engine is not None:
+                eval_draft = draft
+                if hasattr(draft, "draft_json"):
+                    try:
+                        eval_draft = LogEntryDraft.model_validate_json(draft.draft_json)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                decision = self.auto_approval_engine.assess(
+                    target_date=target_date,
+                    draft=eval_draft,
+                    validation=validation,
+                    evidence=evidence,
+                )
+                if decision.eligible and decision.entry is not None:
+                    approved_entry = decision.entry
 
             if approved_entry is None:
                 if self.approval is not None:
@@ -852,6 +1033,28 @@ class PipelineCoordinator:
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
+
+            if self.logger is not None:
+                try:
+                    self.logger.log_event(
+                        run_id=run_id,
+                        work_date=target_date,
+                        stage=sm.current_state.value,
+                        status=Status.GAGAL,
+                        duration_ms=duration_ms,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        error_code=err_name,
+                        level="ERROR",
+                    )
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+            if self.notifier is not None:
+                try:
+                    self.notifier.notify(status=Status.GAGAL, work_date=target_date)
+                except Exception:  # noqa: BLE001, S110
+                    pass
 
             return PipelineResult(
                 run_id=run_id,
