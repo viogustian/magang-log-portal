@@ -554,4 +554,86 @@ public class BackendApiClient
             return null;
         }
     }
+
+    /// <summary>
+    /// Tests Gemini API key validity via POST /api/setup/test-gemini.
+    /// </summary>
+    public virtual async Task<TestGeminiResponse?> TestGeminiAsync(
+        string apiKey,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new TestGeminiRequest { ApiKey = apiKey };
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/test-gemini", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new TestGeminiResponse { Valid = false, Model = string.Empty };
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<TestGeminiResponse>(json, JsonOptions)
+                   ?? new TestGeminiResponse { Valid = false };
+        }
+        catch (Exception)
+        {
+            return new TestGeminiResponse { Valid = false, Model = string.Empty };
+        }
+    }
+
+    /// <summary>
+    /// Checks current MagangHub portal authentication session status via GET /api/portal/auth-status.
+    /// </summary>
+    public virtual async Task<PortalAuthStatusResponse?> GetPortalAuthStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/portal/auth-status", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new PortalAuthStatusResponse { Authenticated = false, SessionStatus = "missing" };
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<PortalAuthStatusResponse>(json, JsonOptions)
+                   ?? new PortalAuthStatusResponse { Authenticated = false, SessionStatus = "missing" };
+        }
+        catch (Exception)
+        {
+            return new PortalAuthStatusResponse { Authenticated = false, SessionStatus = "missing" };
+        }
+    }
+
+    /// <summary>
+    /// Launches interactive login browser for portal Monev Kemnaker via POST /api/portal/open-login.
+    /// </summary>
+    public virtual async Task<OpenLoginResponse?> OpenPortalLoginAsync(
+        int timeoutSeconds = 300,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new OpenLoginRequest { TimeoutSeconds = timeoutSeconds };
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/portal/open-login", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new OpenLoginResponse { Success = false, Message = "Gagal meluncurkan browser login.", Authenticated = false };
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<OpenLoginResponse>(json, JsonOptions)
+                   ?? new OpenLoginResponse { Success = false };
+        }
+        catch (Exception ex)
+        {
+            return new OpenLoginResponse { Success = false, Message = ex.Message, Authenticated = false };
+        }
+    }
 }

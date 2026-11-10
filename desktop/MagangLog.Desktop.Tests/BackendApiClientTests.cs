@@ -617,5 +617,78 @@ public class BackendApiClientTests
         Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
         Assert.EndsWith("/api/setup/unregister-scheduler", handler.SentRequests[0].RequestUri!.AbsolutePath);
     }
+
+    [Fact]
+    public async Task TestTestGeminiAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "valid": true,
+            "model": "gemini-2.5-flash"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.TestGeminiAsync("AIzaSyDummyKey");
+
+        Assert.NotNull(response);
+        Assert.True(response.Valid);
+        Assert.Equal("gemini-2.5-flash", response.Model);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/test-gemini", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestGetPortalAuthStatusAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "authenticated": true,
+            "username": "vio.gustian@agrinesia.co.id",
+            "session_status": "active",
+            "expires_at": "2026-11-20T10:00:00Z"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.GetPortalAuthStatusAsync();
+
+        Assert.NotNull(response);
+        Assert.True(response.Authenticated);
+        Assert.Equal("active", response.SessionStatus);
+        Assert.Equal("vio.gustian@agrinesia.co.id", response.Username);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/portal/auth-status", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestOpenPortalLoginAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "message": "Login browser opened",
+            "authenticated": true
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.OpenPortalLoginAsync(120);
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.True(response.Authenticated);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/portal/open-login", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

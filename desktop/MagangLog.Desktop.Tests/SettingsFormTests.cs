@@ -386,4 +386,155 @@ public class SettingsFormTests
             Assert.Contains("Berhasil", form.AiBannerLabel.Text);
         });
     }
+
+    [Fact]
+    public void TestSettingsForm_Tab5_SchedulerTimeValidation_RejectsInvalidHours()
+    {
+        RunSta(() =>
+        {
+            using var form = new SettingsForm();
+            form.ProfileName = "QA Tester";
+            form.SchedulerEnabled = true;
+
+            // Valid times: Review 16:30, Resume 20:00
+            form.ReviewTime = "16:30";
+            form.ResumeTime = "20:00";
+            form.SetWorkdays(new[] { "mon", "tue", "wed", "thu", "fri" });
+            Assert.True(form.ValidateTabs(out var error));
+
+            // Invalid times: Review 21:00, Resume 20:00 (Review >= Resume)
+            form.ReviewTime = "21:00";
+            form.ResumeTime = "20:00";
+            Assert.False(form.ValidateTabs(out error));
+            Assert.Contains("eksekusi", error?.ToLowerInvariant());
+            Assert.Equal(4, form.TabControl.SelectedIndex); // Tab 5 is index 4
+
+            // Empty workdays when scheduler enabled
+            form.ReviewTime = "16:30";
+            form.ResumeTime = "20:00";
+            form.SetWorkdays(Array.Empty<string>());
+            Assert.False(form.ValidateTabs(out error));
+            Assert.Contains("hari kerja", error?.ToLowerInvariant());
+        });
+    }
+
+    [Fact]
+    public void TestSettingsForm_Tab5_QuickWorkdayButtons()
+    {
+        RunSta(() =>
+        {
+            using var form = new SettingsForm();
+
+            // Select weekdays only
+            form.SelectWeekdaysOnly();
+            var days = form.GetActiveWorkdays();
+            Assert.Equal(5, days.Count);
+            Assert.Contains("mon", days);
+            Assert.Contains("fri", days);
+            Assert.DoesNotContain("sat", days);
+            Assert.DoesNotContain("sun", days);
+
+            // Select all days
+            form.SelectAllWorkdays();
+            days = form.GetActiveWorkdays();
+            Assert.Equal(7, days.Count);
+            Assert.Contains("sat", days);
+            Assert.Contains("sun", days);
+        });
+    }
+
+    [Fact]
+    public async Task TestSettingsForm_Tab6_GeminiCredentials_MaskingToggleAndTest()
+    {
+        var cannedJson = """
+        {
+            "valid": true,
+            "model": "gemini-2.5-flash"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+
+            // Masking toggle
+            form.GeminiApiKey = "AIzaSySecretKey";
+            Assert.True(form.IsApiKeyMasked);
+
+            form.ShowApiKey = true;
+            Assert.False(form.IsApiKeyMasked);
+
+            form.ShowApiKey = false;
+            Assert.True(form.IsApiKeyMasked);
+
+            // Test connectivity
+            await form.TestGeminiConnectionAsync();
+            Assert.Contains("Valid", form.GeminiStatusText);
+            Assert.True(form.IsGeminiValid);
+        });
+    }
+
+    [Fact]
+    public async Task TestSettingsForm_SimpanSemuaPengaturan_OrchestratesFullSave()
+    {
+        var saveResponseJson = """
+        {
+            "success": true,
+            "saved_at": "2026-11-10T11:00:00Z"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(saveResponseJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+
+            form.ProfileName = "Software Engineer";
+            form.NaturalDescription = "Backend Developer C# & Python";
+            form.AddKeyword("devenv.exe");
+            form.SetFileExtensions(new[] { ".cs", ".py" });
+            form.GitFrequency = "sering";
+            form.GitEnabled = true;
+            form.AppEnabled = true;
+            form.BrowserEnabled = false;
+            form.ReviewMode = "review";
+            form.SchedulerEnabled = true;
+            form.ReviewTime = "16:30";
+            form.ResumeTime = "20:00";
+            form.SelectWeekdaysOnly();
+            form.GeminiApiKey = "AIzaSyLiveKey";
+            form.NotifyToast = true;
+
+            var saved = await form.SaveAllSettingsAsync();
+            Assert.True(saved);
+            Assert.Equal(2, handler.SentRequests.Count);
+            Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+            Assert.EndsWith("/api/setup/save", handler.SentRequests[0].RequestUri!.AbsolutePath);
+            Assert.Equal(HttpMethod.Post, handler.SentRequests[1].Method);
+            Assert.EndsWith("/api/setup/register-scheduler", handler.SentRequests[1].RequestUri!.AbsolutePath);
+        });
+    }
+
+    [Fact]
+    public async Task TestSettingsForm_SaveAllSettingsAsync_HandlesBackendErrorGracefully()
+    {
+        var handler = new MockHttpMessageHandler("Internal Server Error", System.Net.HttpStatusCode.InternalServerError);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+            form.ProfileName = "Developer";
+            form.ReviewMode = "review";
+            form.SchedulerEnabled = false;
+
+            var result = await form.SaveAllSettingsAsync();
+            Assert.False(result);
+        });
+    }
 }

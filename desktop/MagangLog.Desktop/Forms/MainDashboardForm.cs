@@ -349,6 +349,10 @@ public class MainDashboardForm : Form
     {
         using var settingsForm = new SettingsForm(_apiClient);
         SettingsDialogShower?.Invoke(settingsForm);
+        if (settingsForm.DialogResult == DialogResult.OK)
+        {
+            _ = RefreshStatusAsync();
+        }
     }
 
     /// <summary>

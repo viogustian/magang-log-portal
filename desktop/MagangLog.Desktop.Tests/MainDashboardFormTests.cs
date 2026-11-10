@@ -700,5 +700,27 @@ public class MainDashboardFormTests
             Assert.Equal(7, capturedDialog.TabControl.TabPages.Count);
         });
     }
+
+    [Fact]
+    public void TestMainDashboardForm_LaunchSettings_WhenSaved_TriggersRefresh()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+
+            form.SettingsDialogShower = dialog =>
+            {
+                dialog.DialogResult = DialogResult.OK;
+            };
+
+            form.LaunchSettings();
+
+            Assert.True(handler.SentRequests.Count >= 3);
+            Assert.Contains(handler.SentRequests, r => r.RequestUri!.AbsolutePath.Contains("/api/status/today"));
+            Assert.Contains(handler.SentRequests, r => r.RequestUri!.AbsolutePath.Contains("/api/evidence/today"));
+        });
+    }
 }
 
