@@ -421,4 +421,29 @@ public class BackendApiClient
             return null;
         }
     }
+
+    /// <summary>
+    /// Fetches logbook entry compliance statuses for all days in a month via GET /api/calendar/month.
+    /// </summary>
+    public virtual async Task<MonthCalendarResponse?> GetCalendarMonthAsync(
+        int year,
+        int month,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/calendar/month?year={year}&month={month}", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<MonthCalendarResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }

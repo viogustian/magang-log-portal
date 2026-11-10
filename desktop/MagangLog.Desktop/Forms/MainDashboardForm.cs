@@ -19,7 +19,7 @@ public class MainDashboardForm : Form
 
     public StatusBannerPanel StatusBanner { get; }
     public SplitContainer MainSplitContainer { get; }
-    public Panel CalendarPanel { get; }
+    public CalendarPanel CalendarPanel { get; }
     public EvidencePanel EvidencePanel { get; }
     public DraftEditorPanel DraftEditor { get; }
     public FallbackNotePanel FallbackNote { get; }
@@ -29,6 +29,8 @@ public class MainDashboardForm : Form
     public bool OnboardingComplete { get; set; } = false;
     public string ConfigFilePath { get; set; } = "config/config.yaml";
     public string PortalUrl { get; set; } = "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat";
+
+    public Action<DayDetailForm>? DayDetailShower { get; set; }
 
     public Action<string> UrlOpener { get; set; } = url =>
     {
@@ -149,33 +151,14 @@ public class MainDashboardForm : Form
         StatusBanner.RunPipelineButton.Click += async (_, _) => await RunPipelineManualAsync();
 
         // 3. Bottom Monthly Calendar Panel
-        CalendarPanel = new Panel
+        CalendarPanel = new CalendarPanel(_apiClient)
         {
             Dock = DockStyle.Bottom,
-            Height = 180,
-            BackColor = Color.White,
-            Padding = new Padding(24, 12, 24, 12),
+            Height = 210,
             BorderStyle = BorderStyle.FixedSingle
         };
-
-        var lblCalendarTitle = new Label
-        {
-            Text = "Kalender Monev Kemnaker",
-            Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(15, 23, 42),
-            Dock = DockStyle.Top,
-            Height = 28
-        };
-        var lblCalendarPlaceholder = new Label
-        {
-            Text = "Tampilan kalender bulanan akan dimuat di sini.",
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(100, 116, 139),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-        CalendarPanel.Controls.Add(lblCalendarPlaceholder);
-        CalendarPanel.Controls.Add(lblCalendarTitle);
+        CalendarPanel.OnDaySelected += async cell => await ShowDayDetailAsync(cell);
+        DayDetailShower = form => form.ShowDialog(this);
 
         // 4. Middle Responsive Content (SplitContainer)
         MainSplitContainer = new SplitContainer
@@ -244,8 +227,9 @@ public class MainDashboardForm : Form
             var statusTask = _apiClient.GetTodayStatusAsync();
             var evidenceTask = _apiClient.GetEvidenceTodayAsync();
             var entryTask = _apiClient.GetTodayEntryAsync();
+            var calendarTask = CalendarPanel.LoadMonthAsync(CalendarPanel.CurrentYear, CalendarPanel.CurrentMonth);
 
-            await Task.WhenAll(statusTask, evidenceTask, entryTask);
+            await Task.WhenAll(statusTask, evidenceTask, entryTask, calendarTask);
 
             var status = await statusTask;
             var evidence = await evidenceTask;
@@ -274,6 +258,30 @@ public class MainDashboardForm : Form
             DraftEditor.LoadEntry(null);
             SetDashboardMode(DashboardMode.DraftEditor);
         }
+    }
+
+    /// <summary>
+    /// Open DayDetailForm modal for selected calendar date.
+    /// </summary>
+    public async Task ShowDayDetailAsync(CalendarDayCellModel cell)
+    {
+        if (string.IsNullOrWhiteSpace(cell.DateString))
+        {
+            return;
+        }
+
+        EntryDetailResponse? entry = null;
+        try
+        {
+            entry = await _apiClient.GetTodayEntryAsync(cell.DateString);
+        }
+        catch (Exception)
+        {
+            entry = null;
+        }
+
+        using var dialog = new DayDetailForm(cell.DateString, entry, _apiClient);
+        DayDetailShower?.Invoke(dialog);
     }
 
     /// <summary>

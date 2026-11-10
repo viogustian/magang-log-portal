@@ -447,5 +447,55 @@ public class BackendApiClientTests
         Assert.Null(response);
         Assert.Single(handler.SentRequests);
     }
+
+    [Fact]
+    public async Task TestGetCalendarMonthAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "days": [
+                {
+                    "date": "2026-10-01",
+                    "day_name": "Kamis",
+                    "status": "TERKIRIM",
+                    "entry_id": "entry-2026-10-01"
+                },
+                {
+                    "date": "2026-10-02",
+                    "day_name": "Jumat",
+                    "status": "PENDING",
+                    "entry_id": null
+                }
+            ]
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.GetCalendarMonthAsync(2026, 10);
+
+        Assert.NotNull(response);
+        Assert.Equal(2, response.Days.Count);
+        Assert.Equal("2026-10-01", response.Days[0].Date);
+        Assert.Equal("TERKIRIM", response.Days[0].Status);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/calendar/month", handler.SentRequests[0].RequestUri!.AbsolutePath);
+        Assert.Contains("year=2026", handler.SentRequests[0].RequestUri!.Query);
+        Assert.Contains("month=10", handler.SentRequests[0].RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task TestGetCalendarMonthAsync_FailureReturnsNull()
+    {
+        var handler = new MockHttpMessageHandler("Server error", HttpStatusCode.InternalServerError);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.GetCalendarMonthAsync(2026, 10);
+
+        Assert.Null(response);
+        Assert.Single(handler.SentRequests);
+    }
 }
 

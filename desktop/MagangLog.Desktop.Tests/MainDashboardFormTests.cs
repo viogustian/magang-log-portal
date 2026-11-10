@@ -522,5 +522,142 @@ public class MainDashboardFormTests
             Assert.True(form.IsDraftEditorVisible);
         });
     }
+
+    [Fact]
+    public async Task TestMainDashboardForm_ShowDayDetailAsync_InvokesDayDetailShower()
+    {
+        var entryJson = """
+        {
+            "entry_id": "entry-2026-10-15",
+            "work_date": "2026-10-15",
+            "kehadiran": "Hadir",
+            "aktivitas": "Aktivitas testing kalender",
+            "pembelajaran": "Pembelajaran testing kalender",
+            "kendala": "Kendala nihil",
+            "status": "TERKIRIM",
+            "validation_passed": true
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("/api/entry/today") || req.RequestUri!.AbsolutePath.Contains("/api/entry"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(entryJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        MainDashboardForm? form = null;
+        RunSta(() =>
+        {
+            form = new MainDashboardForm(client);
+        });
+
+        try
+        {
+            DayDetailForm? capturedDialog = null;
+            form!.DayDetailShower = dialog => capturedDialog = dialog;
+
+            var cell = new CalendarDayCellModel
+            {
+                DayNumber = 15,
+                DateString = "2026-10-15",
+                Status = "TERKIRIM"
+            };
+
+            await form.ShowDayDetailAsync(cell);
+
+            Assert.NotNull(capturedDialog);
+            Assert.Equal("2026-10-15", capturedDialog.TargetDate);
+            Assert.Equal("Aktivitas testing kalender", capturedDialog.AktivitasTextBox.Text);
+            Assert.Contains("TERKIRIM", capturedDialog.StatusBadgeLabel.Text);
+        }
+        finally
+        {
+            form?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task TestMainDashboardForm_CalendarPanelLoadedDuringRefreshStatus()
+    {
+        var calendarJson = """
+        {
+            "days": [
+                {
+                    "date": "2026-11-01",
+                    "day_name": "Minggu",
+                    "status": "LIBUR",
+                    "entry_id": null
+                },
+                {
+                    "date": "2026-11-02",
+                    "day_name": "Senin",
+                    "status": "TERKIRIM",
+                    "entry_id": "entry-2026-11-02"
+                }
+            ]
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("/api/calendar/month"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(calendarJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/status/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"target_date\":\"2026-11-10\",\"status\":\"SIAP REVIEW\",\"is_workday\":true,\"is_holiday\":false,\"has_submitted_entry\":false,\"needs_user_action\":true}", System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/evidence/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"items\":[]}", System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/entry/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        MainDashboardForm? form = null;
+        RunSta(() =>
+        {
+            form = new MainDashboardForm(client);
+        });
+
+        try
+        {
+            await form!.RefreshStatusAsync();
+
+            Assert.NotNull(form.CalendarPanel.CurrentData);
+            Assert.True(form.CalendarPanel.CalendarGrid.RowCount > 0);
+        }
+        finally
+        {
+            form?.Dispose();
+        }
+    }
 }
 
