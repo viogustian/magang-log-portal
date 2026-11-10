@@ -112,6 +112,8 @@ public class MainDashboardFormTests
             Assert.NotNull(form.StatusBanner);
             Assert.NotNull(form.MainSplitContainer);
             Assert.NotNull(form.CalendarPanel);
+            Assert.NotNull(form.EvidencePanel);
+            Assert.Contains(form.EvidencePanel, form.MainSplitContainer.Panel2.Controls.Cast<Control>());
         });
     }
 
@@ -161,6 +163,76 @@ public class MainDashboardFormTests
             Assert.Equal(Models.DashboardStatus.SiapReview, form.StatusBanner.CurrentStatus);
             Assert.Equal("🔵 SIAP REVIEW", form.StatusBanner.StatusBadgeLabel.Text);
             Assert.False(form.StatusBanner.IsOffline);
+        }
+        finally
+        {
+            form?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task TestRefreshStatusAsyncUpdatesEvidenceFeed()
+    {
+        var statusJson = """
+        {
+            "target_date": "2026-11-10",
+            "status": "SIAP REVIEW",
+            "is_workday": true,
+            "is_holiday": false,
+            "has_submitted_entry": false,
+            "needs_user_action": true
+        }
+        """;
+        var evidenceJson = """
+        {
+            "items": [
+                {
+                    "id": "ev-10",
+                    "source": "git",
+                    "kind": "commit",
+                    "ts": "2026-11-10T11:00:00Z",
+                    "title": "feat: timeline grid",
+                    "detail": "sample detail",
+                    "strength": "strong"
+                }
+            ]
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("/api/status/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(statusJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/evidence/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(evidenceJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        });
+
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        MainDashboardForm? form = null;
+        RunSta(() =>
+        {
+            form = new MainDashboardForm(client);
+        });
+
+        try
+        {
+            await form!.RefreshStatusAsync();
+
+            Assert.Single(form.EvidencePanel.AllItems);
+            Assert.Equal("feat: timeline grid", form.EvidencePanel.AllItems[0].Title);
+            Assert.Single(form.EvidencePanel.EvidenceGrid.Rows);
         }
         finally
         {

@@ -251,4 +251,34 @@ public class BackendApiClient
             return false;
         }
     }
+
+    /// <summary>
+    /// Fetch sanitized evidence timeline items for today via GET /api/evidence/today.
+    /// Returns empty list if network fails or backend is unreachable.
+    /// </summary>
+    public virtual async Task<List<EvidenceItem>> GetEvidenceTodayAsync(
+        string? dateStr = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(dateStr)
+                ? $"{_baseUrl}/api/evidence/today"
+                : $"{_baseUrl}/api/evidence/today?date={Uri.EscapeDataString(dateStr)}";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new List<EvidenceItem>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var feed = JsonSerializer.Deserialize<EvidenceFeedResponse>(json, JsonOptions);
+            return feed?.Items ?? new List<EvidenceItem>();
+        }
+        catch (Exception)
+        {
+            return new List<EvidenceItem>();
+        }
+    }
 }

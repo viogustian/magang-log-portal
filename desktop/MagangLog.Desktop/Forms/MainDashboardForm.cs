@@ -20,6 +20,7 @@ public class MainDashboardForm : Form
     public StatusBannerPanel StatusBanner { get; }
     public SplitContainer MainSplitContainer { get; }
     public Panel CalendarPanel { get; }
+    public EvidencePanel EvidencePanel { get; }
     public System.Windows.Forms.Timer PollingTimer { get; }
 
     public bool OnboardingComplete { get; set; } = false;
@@ -203,24 +204,10 @@ public class MainDashboardForm : Form
         MainSplitContainer.Panel1.Controls.Add(leftTableLayout);
 
         // Right Panel (Panel2: Evidence Feed)
-        var rightPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(16),
-            BackColor = Color.White
-        };
-        var lblEvidencePlaceholder = new Label
-        {
-            Text = "Area Rekaman Bukti Harian (Evidence Feed)",
-            Font = new Font(Font.FontFamily, 10f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(100, 116, 139),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-        rightPanel.Controls.Add(lblEvidencePlaceholder);
-        MainSplitContainer.Panel2.Controls.Add(rightPanel);
+        EvidencePanel = new EvidencePanel();
+        MainSplitContainer.Panel2.Controls.Add(EvidencePanel);
 
-        // Adjust initial splitter proportions (~70% left, ~30% right)
+        // Adjust initial splitter proportions (~65-70% left, ~30-35% right)
         MainSplitContainer.SplitterDistance = Math.Max(200, (int)(Width * 0.68));
 
         // Add controls in reverse dock order:
@@ -259,7 +246,14 @@ public class MainDashboardForm : Form
     {
         try
         {
-            var status = await _apiClient.GetTodayStatusAsync();
+            var statusTask = _apiClient.GetTodayStatusAsync();
+            var evidenceTask = _apiClient.GetEvidenceTodayAsync();
+
+            await Task.WhenAll(statusTask, evidenceTask);
+
+            var status = await statusTask;
+            var evidence = await evidenceTask;
+
             if (status == null)
             {
                 StatusBanner.UpdateOffline();
@@ -268,10 +262,13 @@ public class MainDashboardForm : Form
             {
                 StatusBanner.UpdateStatus(status);
             }
+
+            EvidencePanel.SetEvidenceItems(evidence);
         }
         catch (Exception)
         {
             StatusBanner.UpdateOffline();
+            EvidencePanel.SetEvidenceItems(null);
         }
     }
 

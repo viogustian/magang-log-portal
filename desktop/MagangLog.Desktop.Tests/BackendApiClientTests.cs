@@ -244,5 +244,49 @@ public class BackendApiClientTests
 
         Assert.False(result);
     }
+
+    [Fact]
+    public async Task TestGetEvidenceTodayAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "items": [
+                {
+                    "id": "ev-1",
+                    "source": "git",
+                    "kind": "commit",
+                    "ts": "2026-11-10T09:15:00Z",
+                    "title": "feat: timeline feed",
+                    "detail": "added evidence panel",
+                    "strength": "strong"
+                }
+            ]
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var items = await client.GetEvidenceTodayAsync();
+
+        Assert.Single(items);
+        Assert.Equal("ev-1", items[0].Id);
+        Assert.Equal("git", items[0].Source);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.Contains("/api/evidence/today", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestGetEvidenceTodayAsync_OfflineReturnsEmptyList()
+    {
+        var handler = new MockHttpMessageHandler(_ => throw new HttpRequestException("Backend unreachable"));
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var items = await client.GetEvidenceTodayAsync();
+
+        Assert.NotNull(items);
+        Assert.Empty(items);
+    }
 }
 
