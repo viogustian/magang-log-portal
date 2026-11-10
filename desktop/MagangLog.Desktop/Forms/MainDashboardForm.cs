@@ -1,20 +1,50 @@
+using System.Diagnostics;
+using MagangLog.Desktop.Controls;
+using MagangLog.Desktop.Models;
 using MagangLog.Desktop.Services;
 
 namespace MagangLog.Desktop.Forms;
 
 /// <summary>
 /// Main desktop dashboard window for monitoring, review, calendar, and settings.
-/// Launches SetupWizardDialog modally on load when onboarding has not been completed.
+/// Serves as the primary control center for daily intern log compliance.
 /// </summary>
 public class MainDashboardForm : Form
 {
     private readonly BackendApiClient _apiClient;
     private readonly Label _lblTitle;
-    private readonly Label _lblStatus;
     private readonly Button _btnOpenWizard;
+    private readonly Button _btnSettings;
+    private readonly Button _btnAbout;
+
+    public StatusBannerPanel StatusBanner { get; }
+    public SplitContainer MainSplitContainer { get; }
+    public Panel CalendarPanel { get; }
+    public System.Windows.Forms.Timer PollingTimer { get; }
 
     public bool OnboardingComplete { get; set; } = false;
     public string ConfigFilePath { get; set; } = "config/config.yaml";
+    public string PortalUrl { get; set; } = "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat";
+
+    public Action<string> UrlOpener { get; set; } = url =>
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Gagal membuka browser default: {ex.Message}",
+                "Kesalahan Peramban",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    };
 
     public MainDashboardForm(BackendApiClient? apiClient = null)
     {
@@ -26,12 +56,13 @@ public class MainDashboardForm : Form
         MinimumSize = new Size(800, 600);
         BackColor = Color.FromArgb(248, 250, 252);
 
+        // 1. Header Bar (Dock Top)
         var headerPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 64,
+            Height = 58,
             BackColor = Color.White,
-            Padding = new Padding(24, 16, 24, 16)
+            Padding = new Padding(24, 12, 24, 12)
         };
 
         _lblTitle = new Label
@@ -40,43 +71,171 @@ public class MainDashboardForm : Form
             Font = new Font(Font.FontFamily, 13f, FontStyle.Bold),
             ForeColor = Color.FromArgb(15, 23, 42),
             Dock = DockStyle.Left,
-            AutoSize = true
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+
+        var headerBtnFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            FlowDirection = FlowDirection.RightToLeft,
+            AutoSize = true,
+            BackColor = Color.Transparent,
+            WrapContents = false
         };
 
         _btnOpenWizard = new Button
         {
             Text = "Buka Setup Wizard",
-            Dock = DockStyle.Right,
-            Width = 150,
             Height = 32,
+            AutoSize = true,
+            Padding = new Padding(12, 0, 12, 0),
             BackColor = Color.FromArgb(241, 245, 249),
             ForeColor = Color.FromArgb(30, 41, 59),
             FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand
+            Cursor = Cursors.Hand,
+            Margin = new Padding(6, 0, 0, 0),
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular)
         };
+        _btnOpenWizard.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
         _btnOpenWizard.Click += (_, _) => LaunchSetupWizard();
 
-        headerPanel.Controls.Add(_lblTitle);
-        headerPanel.Controls.Add(_btnOpenWizard);
-        Controls.Add(headerPanel);
+        _btnSettings = new Button
+        {
+            Text = "Pengaturan ⚙️",
+            Height = 32,
+            AutoSize = true,
+            Padding = new Padding(12, 0, 12, 0),
+            BackColor = Color.FromArgb(241, 245, 249),
+            ForeColor = Color.FromArgb(30, 41, 59),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            Margin = new Padding(6, 0, 0, 0),
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular)
+        };
+        _btnSettings.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
+        _btnSettings.Click += (_, _) => LaunchSettings();
 
-        var bodyPanel = new Panel
+        _btnAbout = new Button
+        {
+            Text = "Tentang ℹ️",
+            Height = 32,
+            AutoSize = true,
+            Padding = new Padding(12, 0, 12, 0),
+            BackColor = Color.FromArgb(241, 245, 249),
+            ForeColor = Color.FromArgb(30, 41, 59),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            Margin = new Padding(6, 0, 0, 0),
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular)
+        };
+        _btnAbout.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
+        _btnAbout.Click += (_, _) => LaunchAbout();
+
+        headerBtnFlow.Controls.Add(_btnOpenWizard);
+        headerBtnFlow.Controls.Add(_btnSettings);
+        headerBtnFlow.Controls.Add(_btnAbout);
+
+        headerPanel.Controls.Add(_lblTitle);
+        headerPanel.Controls.Add(headerBtnFlow);
+
+        // 2. Status Hero Banner (Dock Top below Header)
+        StatusBanner = new StatusBannerPanel();
+        StatusBanner.OpenPortalButton.Click += (_, _) => OpenPortal();
+        StatusBanner.RunPipelineButton.Click += async (_, _) => await RunPipelineManualAsync();
+
+        // 3. Bottom Monthly Calendar Panel
+        CalendarPanel = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 180,
+            BackColor = Color.White,
+            Padding = new Padding(24, 12, 24, 12),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var lblCalendarTitle = new Label
+        {
+            Text = "Kalender Monev Kemnaker",
+            Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            Dock = DockStyle.Top,
+            Height = 28
+        };
+        var lblCalendarPlaceholder = new Label
+        {
+            Text = "Tampilan kalender bulanan akan dimuat di sini.",
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        CalendarPanel.Controls.Add(lblCalendarPlaceholder);
+        CalendarPanel.Controls.Add(lblCalendarTitle);
+
+        // 4. Middle Responsive Content (SplitContainer)
+        MainSplitContainer = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(24)
+            Orientation = Orientation.Vertical,
+            SplitterWidth = 8,
+            BackColor = Color.FromArgb(241, 245, 249)
         };
 
-        _lblStatus = new Label
+        // Left Panel (Panel1: Draft Editor & Quick Notes)
+        var leftTableLayout = new TableLayoutPanel
         {
-            Text = "Dashboard siap digunakan.",
-            Dock = DockStyle.Top,
-            Font = new Font(Font.FontFamily, 10.5f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(71, 85, 105),
-            Height = 40
+            Dock = DockStyle.Fill,
+            RowCount = 1,
+            ColumnCount = 1,
+            Padding = new Padding(16),
+            BackColor = Color.FromArgb(248, 250, 252)
         };
+        var lblDraftPlaceholder = new Label
+        {
+            Text = "Area Peninjauan & Penyuntingan Draf Logbook (Langkah Selanjutnya)",
+            Font = new Font(Font.FontFamily, 10f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        leftTableLayout.Controls.Add(lblDraftPlaceholder);
+        MainSplitContainer.Panel1.Controls.Add(leftTableLayout);
 
-        bodyPanel.Controls.Add(_lblStatus);
-        Controls.Add(bodyPanel);
+        // Right Panel (Panel2: Evidence Feed)
+        var rightPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(16),
+            BackColor = Color.White
+        };
+        var lblEvidencePlaceholder = new Label
+        {
+            Text = "Area Rekaman Bukti Harian (Evidence Feed)",
+            Font = new Font(Font.FontFamily, 10f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        rightPanel.Controls.Add(lblEvidencePlaceholder);
+        MainSplitContainer.Panel2.Controls.Add(rightPanel);
+
+        // Adjust initial splitter proportions (~70% left, ~30% right)
+        MainSplitContainer.SplitterDistance = Math.Max(200, (int)(Width * 0.68));
+
+        // Add controls in reverse dock order:
+        // Fill first, then Bottom, then Top banners
+        Controls.Add(MainSplitContainer);
+        Controls.Add(CalendarPanel);
+        Controls.Add(StatusBanner);
+        Controls.Add(headerPanel);
+
+        // 5. Polling Timer (60s)
+        PollingTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 60000
+        };
+        PollingTimer.Tick += async (_, _) => await RefreshStatusAsync();
     }
 
     protected override void OnLoad(EventArgs e)
@@ -87,6 +246,90 @@ public class MainDashboardForm : Form
         {
             LaunchSetupWizard();
         }
+
+        PollingTimer.Start();
+        _ = RefreshStatusAsync();
+    }
+
+    /// <summary>
+    /// Fetch today's status from backend and refresh status banner.
+    /// Safely catches network exceptions and sets banner to offline status.
+    /// </summary>
+    public async Task RefreshStatusAsync()
+    {
+        try
+        {
+            var status = await _apiClient.GetTodayStatusAsync();
+            if (status == null)
+            {
+                StatusBanner.UpdateOffline();
+            }
+            else
+            {
+                StatusBanner.UpdateStatus(status);
+            }
+        }
+        catch (Exception)
+        {
+            StatusBanner.UpdateOffline();
+        }
+    }
+
+    /// <summary>
+    /// Trigger manual pipeline execution and refresh today's status.
+    /// </summary>
+    public async Task RunPipelineManualAsync()
+    {
+        StatusBanner.SetPipelineRunning(true);
+        try
+        {
+            var success = await _apiClient.TriggerPipelineAsync();
+            if (!success)
+            {
+                StatusBanner.UpdateOffline();
+            }
+        }
+        catch (Exception)
+        {
+            StatusBanner.UpdateOffline();
+        }
+        finally
+        {
+            StatusBanner.SetPipelineRunning(false);
+            await RefreshStatusAsync();
+        }
+    }
+
+    /// <summary>
+    /// Open Kemnaker Monev portal in default web browser.
+    /// </summary>
+    public void OpenPortal()
+    {
+        UrlOpener.Invoke(PortalUrl);
+    }
+
+    /// <summary>
+    /// Open Settings reconfiguration dialog.
+    /// </summary>
+    public void LaunchSettings()
+    {
+        MessageBox.Show(
+            "Dialog Pengaturan akan tersedia pada pembaruan berikutnya.",
+            "Pengaturan",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// Open About Developer dialog.
+    /// </summary>
+    public void LaunchAbout()
+    {
+        MessageBox.Show(
+            "MagangLog Portal — Local Dashboard v2.0.0\nLead Developer: VIO GUSTIAN NUR ALAMSYAH (@viogustian)\nHak Cipta © 2026 Vio Gustian Nur Alamsyah.",
+            "Tentang MagangLog Portal",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
     /// <summary>
@@ -99,7 +342,6 @@ public class MainDashboardForm : Form
             return false;
         }
 
-        // If config file already exists and is non-empty, onboarding was completed
         if (File.Exists(ConfigFilePath))
         {
             return false;
@@ -118,9 +360,18 @@ public class MainDashboardForm : Form
         if (result == DialogResult.OK)
         {
             OnboardingComplete = true;
-            _lblStatus.Text = "Onboarding selesai. Konfigurasi berhasil disimpan.";
+            _ = RefreshStatusAsync();
         }
         return result;
     }
-}
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            PollingTimer?.Stop();
+            PollingTimer?.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+}

@@ -194,4 +194,61 @@ public class BackendApiClient
         return JsonSerializer.Deserialize<SaveConfigResponse>(json, JsonOptions)
                ?? new SaveConfigResponse { Success = true };
     }
+
+    /// <summary>
+    /// Fetch today's pipeline, gate, and ledger status via GET /api/status/today.
+    /// Returns null if network fails or backend is unreachable.
+    /// </summary>
+    public virtual async Task<TodayStatusResponse?> GetTodayStatusAsync(
+        string? dateStr = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(dateStr)
+                ? $"{_baseUrl}/api/status/today"
+                : $"{_baseUrl}/api/status/today?date={Uri.EscapeDataString(dateStr)}";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<TodayStatusResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Trigger manual pipeline execution (draft regeneration from evidence) via POST /api/entry/draft.
+    /// Returns true if execution succeeded, false otherwise.
+    /// </summary>
+    public virtual async Task<bool> TriggerPipelineAsync(
+        string? dateStr = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new Dictionary<string, string>();
+            if (!string.IsNullOrWhiteSpace(dateStr))
+            {
+                payload["work_date"] = dateStr;
+            }
+
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/entry/draft", content, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 }
