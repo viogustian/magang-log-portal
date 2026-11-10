@@ -236,3 +236,4 @@ public class SubmissionModePanel : Panel
         ModeChanged?.Invoke(this, EventArgs.Empty);
     }
 }
+

@@ -122,3 +122,4 @@ public class SetupWizardDialogStep5Tests
         });
     }
 }
+

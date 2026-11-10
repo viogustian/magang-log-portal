@@ -138,5 +138,38 @@ public class BackendApiClientTests
         Assert.Equal("UI/UX Designer", presets[0].ProfileName);
         Assert.Contains("Figma.exe", presets[0].ExtractKeywords());
     }
+
+    [Fact]
+    public async Task TestSaveConfigAsync_PostsToSaveEndpoint()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "saved_at": "2026-11-09T22:30:00Z"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var httpClient = new HttpClient(handler);
+        var client = new BackendApiClient(httpClient);
+
+        var req = new SaveConfigRequest
+        {
+            Timezone = "Asia/Jakarta",
+            Review = new ReviewSettingsDto { Mode = "review" },
+            Sources = new SourcesSettingsDto
+            {
+                Git = new GitSourceSettingsDto { Enabled = true, Repositories = new List<string> { "C:/Repo" } }
+            }
+        };
+
+        var response = await client.SaveConfigAsync(req);
+
+        Assert.True(response.Success);
+        Assert.Equal("2026-11-09T22:30:00Z", response.SavedAt);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/save", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

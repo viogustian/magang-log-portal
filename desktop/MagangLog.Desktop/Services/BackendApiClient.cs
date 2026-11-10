@@ -176,4 +176,22 @@ public class BackendApiClient
         return JsonSerializer.Deserialize<SaveProgressResponse>(json, JsonOptions)
                ?? new SaveProgressResponse { Success = true };
     }
+
+    /// <summary>
+    /// Persist complete configuration payload via POST /api/setup/save.
+    /// </summary>
+    public virtual async Task<SaveConfigResponse> SaveConfigAsync(
+        SaveConfigRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var jsonPayload = JsonSerializer.Serialize(request, JsonOptions);
+        var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/save", content, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<SaveConfigResponse>(json, JsonOptions)
+               ?? new SaveConfigResponse { Success = true };
+    }
 }

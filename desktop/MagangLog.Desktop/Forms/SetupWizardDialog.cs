@@ -19,11 +19,13 @@ public class SetupWizardDialog : Form
     private readonly JobRolePanel _rolePanel;
     private readonly GitFrequencyPanel _frequencyPanel;
     private readonly SubmissionModePanel _submissionModePanel;
+    private readonly SummaryPanel _summaryPanel;
     private readonly Button _btnBack;
     private readonly Button _btnNext;
     private readonly Label _lblStatus;
 
     private int _currentStep = 0;
+    private int? _returnStep = null;
 
     public int StepCount => 6;
     public int CurrentStep => _currentStep;
@@ -38,6 +40,7 @@ public class SetupWizardDialog : Form
     public JobRolePanel RolePanel => _rolePanel;
     public GitFrequencyPanel FrequencyPanel => _frequencyPanel;
     public SubmissionModePanel SubmissionModePanel => _submissionModePanel;
+    public SummaryPanel SummaryPanel => _summaryPanel;
     public IReadOnlyList<Panel> StepPanels => _stepPanels;
 
     public SetupWizardDialog(BackendApiClient? apiClient = null)
@@ -159,6 +162,12 @@ public class SetupWizardDialog : Form
         _stepPanels[4].Controls.Add(_submissionModePanel);
         _submissionModePanel.BringToFront();
 
+        // Initialize and host SummaryPanel in Step 5
+        _summaryPanel = new SummaryPanel();
+        _summaryPanel.EditSectionRequested += (_, targetStep) => HandleEditSection(targetStep);
+        _stepPanels[5].Controls.Add(_summaryPanel);
+        _summaryPanel.BringToFront();
+
         Controls.Add(_contentContainer);
 
         // Activate step 0
@@ -245,6 +254,12 @@ public class SetupWizardDialog : Form
         GoToStep(stepToActivate);
     }
 
+    private void HandleEditSection(int targetStep)
+    {
+        _returnStep = 5;
+        GoToStep(targetStep);
+    }
+
     /// <summary>
     /// Switch active panel and update navigation buttons and step indicator.
     /// </summary>
@@ -261,6 +276,11 @@ public class SetupWizardDialog : Form
         _btnNext.Text = (_currentStep == StepCount - 1) ? "Selesai" : "Lanjut";
 
         _indicator.UpdateStep(_currentStep, State.CompletedSteps);
+
+        if (_currentStep == 5)
+        {
+            _summaryPanel.RefreshSummary(State);
+        }
 
         EvaluateGateState();
     }
@@ -354,6 +374,12 @@ public class SetupWizardDialog : Form
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
+        else if (_currentStep == 5)
+        {
+            _btnNext.Enabled = true;
+            _lblStatus.Text = "Semua konfigurasi siap disimpan. Klik Selesai untuk mulai menggunakan Magang Log.";
+            _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+        }
         else
         {
             _btnNext.Enabled = true;
@@ -404,13 +430,87 @@ public class SetupWizardDialog : Form
             State.SetStepData("full_access_confirmed", State.FullAccessConfirmed);
         }
 
+        // If returned from a quick-edit "Ubah" jump, route back directly to Step 6 (index 5)
+        if (_returnStep.HasValue)
+        {
+            var dest = _returnStep.Value;
+            _returnStep = null;
+            GoToStep(dest);
+            return;
+        }
+
         if (_currentStep >= StepCount - 1)
         {
-            // Final step: finish wizard
-            State.MarkStepCompleted(_currentStep);
-            DialogResult = DialogResult.OK;
-            Close();
-            return;
+            // Final step: persist complete configuration to disk via backend API
+            _btnNext.Enabled = false;
+            _btnNext.Text = "⏳ Menyimpan...";
+            try
+            {
+                var appConfigs = new List<ApplicationConfig>();
+                if (State.Keywords != null && State.Keywords.Count > 0)
+                {
+                    appConfigs.Add(new ApplicationConfig
+                    {
+                        Name = string.IsNullOrWhiteSpace(State.ProfileName) ? "General" : State.ProfileName,
+                        ProcessNames = State.Keywords.Where(k => k.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)).ToList(),
+                        FileExtensions = new List<string>()
+                    });
+                }
+
+                var workProfile = new WorkProfile
+                {
+                    ProfileName = string.IsNullOrWhiteSpace(State.ProfileName) ? "General Intern" : State.ProfileName,
+                    NaturalDescription = State.RoleDescription,
+                    Applications = appConfigs,
+                    WatchFolders = State.ProjectFolders ?? new List<string>(),
+                    BrowserDomains = new List<string> { "github.com", "gitlab.com", "stackoverflow.com" }
+                };
+
+                var saveReq = new SaveConfigRequest
+                {
+                    Timezone = "Asia/Jakarta",
+                    Workdays = new List<string> { "mon", "tue", "wed", "thu", "fri" },
+                    Review = new ReviewSettingsDto
+                    {
+                        Mode = State.ReviewMode,
+                        AutoIfConfident = false
+                    },
+                    Sources = new SourcesSettingsDto
+                    {
+                        Git = new GitSourceSettingsDto
+                        {
+                            Enabled = State.Sources?.GitEnabled ?? true,
+                            Repositories = State.ProjectFolders ?? new List<string>()
+                        },
+                        App = new AppSourceSettingsDto
+                        {
+                            Enabled = State.Sources?.AppEnabled ?? true,
+                            WorkProfile = workProfile
+                        },
+                        Browser = new BrowserSourceSettingsDto
+                        {
+                            Enabled = State.Sources?.BrowserEnabled ?? false,
+                            AllowDomains = new List<string> { "github.com", "gitlab.com", "stackoverflow.com" }
+                        }
+                    },
+                    WorkProfile = workProfile
+                };
+
+                await _apiClient.SaveConfigAsync(saveReq);
+
+                State.MarkStepCompleted(_currentStep);
+                DialogResult = DialogResult.OK;
+                Close();
+                return;
+            }
+            catch (Exception ex)
+            {
+                _btnNext.Enabled = true;
+                _btnNext.Text = "Selesai";
+                _lblStatus.Text = $"Gagal menyimpan konfigurasi: {ex.Message}";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
+                return;
+            }
         }
 
         // Mark current step as completed
