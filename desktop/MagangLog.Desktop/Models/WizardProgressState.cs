@@ -35,6 +35,12 @@ public class WizardProgressState
     [JsonPropertyName("full_access_confirmed")]
     public bool FullAccessConfirmed { get; set; } = false;
 
+    [JsonPropertyName("gemini_api_key")]
+    public string GeminiApiKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("gemini_model")]
+    public string GeminiModel { get; set; } = "gemini-3.5-flash";
+
     [JsonPropertyName("step_data")]
     public Dictionary<string, object?> StepData { get; set; } = new();
 

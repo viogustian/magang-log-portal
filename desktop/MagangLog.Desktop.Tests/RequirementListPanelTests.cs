@@ -78,8 +78,18 @@ public class RequirementListPanelTests
             await panel.LoadRequirementsAsync();
 
             Assert.True(panel.AllRequirementsSatisfied);
+
+            // Initially empty API key blocks the gate
+            dialog.GeminiApiKey = string.Empty;
+            dialog.EvaluateGateState();
+            Assert.False(dialog.NextButton.Enabled);
+            Assert.Contains("api key", dialog.StatusLabel.Text.ToLower());
+
+            // Providing Gemini API Key enables the gate
+            dialog.GeminiApiKey = "AIzaSyValidTestKey";
+            dialog.EvaluateGateState();
             Assert.True(dialog.NextButton.Enabled);
-            Assert.Contains("terpenuhi", dialog.StatusLabel.Text.ToLower());
+            Assert.Contains("siap", dialog.StatusLabel.Text.ToLower());
         });
     }
 
@@ -147,6 +157,7 @@ public class RequirementListPanelTests
 
             var client = new BackendApiClient(new HttpClient(handler));
             using var dialog = new SetupWizardDialog(client);
+            dialog.GeminiApiKey = "AIzaSyValidTestKey";
             var panel = dialog.RequirementPanel;
 
             await panel.LoadRequirementsAsync();

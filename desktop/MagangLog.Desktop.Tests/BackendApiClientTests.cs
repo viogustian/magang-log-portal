@@ -727,5 +727,26 @@ public class BackendApiClientTests
         Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
         Assert.EndsWith("/api/setup/gemini-models", handler.SentRequests[0].RequestUri!.AbsolutePath);
     }
+
+    [Fact]
+    public async Task TestDeleteGeminiKeyAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "message": "Kunci API Gemini berhasil dihapus."
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.DeleteGeminiKeyAsync();
+
+        Assert.True(response);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/delete-gemini-key", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

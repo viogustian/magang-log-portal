@@ -580,4 +580,60 @@ public class SettingsFormTests
             Assert.Equal("gemini-3.8-flash", req.Llm.Model);
         });
     }
+
+    [Fact]
+    public async Task TestSettingsForm_DeleteGeminiApiKey_ClearsKeyAndStatus()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "message": "Kunci API Gemini berhasil dihapus."
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+            form.GeminiApiKey = "AIzaSyTestKeyToDelete";
+            Assert.Equal("AIzaSyTestKeyToDelete", form.GeminiApiKey);
+
+            await form.DeleteGeminiApiKeyAsync();
+
+            Assert.Empty(form.GeminiApiKey);
+            Assert.Contains("dihapus", form.GeminiStatusText);
+            Assert.False(form.IsGeminiValid);
+        });
+    }
+
+    [Fact]
+    public async Task TestSettingsForm_SchedulerDetails_DisplaysStatusProperly()
+    {
+        var cannedJson = """
+        {
+            "status": "registered",
+            "is_registered": true,
+            "review_task_name": "MagangLog-Review",
+            "resume_task_name": "MagangLog-Resume",
+            "review_time": "16:30",
+            "resume_time": "20:00",
+            "diagnostic_message": "Tugas otomatis aktif terdaftar."
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+            await form.RefreshSchedulerStatusAsync();
+
+            Assert.Contains("Terdaftar Aktif", form.SchedulerStatusText);
+            Assert.Contains("MagangLog-Review", form.SchedulerDetailsText);
+            Assert.Contains("MagangLog-Resume", form.SchedulerDetailsText);
+        });
+    }
 }

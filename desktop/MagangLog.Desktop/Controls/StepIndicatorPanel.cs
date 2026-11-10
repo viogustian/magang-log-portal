@@ -7,7 +7,7 @@ public class StepIndicatorPanel : Panel
 {
     private static readonly string[] DefaultStepTitles =
     [
-        "1. Requirement",
+        "1. Kredensial AI & Sistem",
         "2. Folder Proyek",
         "3. Kata Kunci",
         "4. Intensitas Git",

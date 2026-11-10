@@ -14,6 +14,7 @@ public class SetupWizardDialog : Form
     private readonly StepIndicatorPanel _indicator;
     private readonly Panel _contentContainer;
     private readonly Panel[] _stepPanels;
+    private readonly GeminiCredentialsCard _geminiCard;
     private readonly RequirementListPanel _requirementPanel;
     private readonly FolderListPanel _folderPanel;
     private readonly JobRolePanel _rolePanel;
@@ -35,6 +36,12 @@ public class SetupWizardDialog : Form
     public Button NextButton => _btnNext;
     public Label StatusLabel => _lblStatus;
     public StepIndicatorPanel StepIndicator => _indicator;
+    public GeminiCredentialsCard GeminiCard => _geminiCard;
+    public string GeminiApiKey
+    {
+        get => _geminiCard.ApiKey;
+        set => _geminiCard.ApiKey = value;
+    }
     public RequirementListPanel RequirementPanel => _requirementPanel;
     public FolderListPanel FolderPanel => _folderPanel;
     public JobRolePanel RolePanel => _rolePanel;
@@ -53,8 +60,8 @@ public class SetupWizardDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        Size = new Size(760, 580);
-        MinimumSize = new Size(700, 520);
+        Size = new Size(760, 620);
+        MinimumSize = new Size(720, 560);
         BackColor = Color.White;
 
         // Top: Step Indicator Panel
@@ -132,11 +139,18 @@ public class SetupWizardDialog : Form
             _contentContainer.Controls.Add(pnl);
         }
 
-        // Initialize and host RequirementListPanel in Step 0
+        // Initialize and host GeminiCredentialsCard and RequirementListPanel in Step 0
+        _geminiCard = new GeminiCredentialsCard(_apiClient);
+        _geminiCard.Dock = DockStyle.Top;
+        _geminiCard.GateStateChanged += (_, _) => EvaluateGateState();
+
         _requirementPanel = new RequirementListPanel(_apiClient);
+        _requirementPanel.Dock = DockStyle.Fill;
         _requirementPanel.GateStateChanged += (_, _) => EvaluateGateState();
+
         _stepPanels[0].Controls.Add(_requirementPanel);
-        _requirementPanel.BringToFront();
+        _stepPanels[0].Controls.Add(_geminiCard);
+        _geminiCard.BringToFront();
 
         // Initialize and host FolderListPanel in Step 1
         _folderPanel = new FolderListPanel(_apiClient);
@@ -146,6 +160,7 @@ public class SetupWizardDialog : Form
 
         // Initialize and host JobRolePanel in Step 2
         _rolePanel = new JobRolePanel(_apiClient);
+        _rolePanel.ApiKeyProvider = () => !string.IsNullOrEmpty(State.GeminiApiKey) ? State.GeminiApiKey : _geminiCard.ApiKey;
         _rolePanel.GateStateChanged += (_, _) => EvaluateGateState();
         _stepPanels[2].Controls.Add(_rolePanel);
         _rolePanel.BringToFront();
@@ -157,7 +172,7 @@ public class SetupWizardDialog : Form
         _frequencyPanel.BringToFront();
 
         // Initialize and host SubmissionModePanel in Step 4
-        _submissionModePanel = new SubmissionModePanel();
+        _submissionModePanel = new SubmissionModePanel(_apiClient);
         _submissionModePanel.ModeChanged += (_, _) => EvaluateGateState();
         _stepPanels[4].Controls.Add(_submissionModePanel);
         _submissionModePanel.BringToFront();
@@ -181,6 +196,7 @@ public class SetupWizardDialog : Form
         _ = _rolePanel.LoadPresetsAsync();
         if (_currentStep == 0)
         {
+            await _geminiCard.LoadSavedKeyAsync();
             await _requirementPanel.LoadRequirementsAsync();
         }
     }
@@ -229,6 +245,15 @@ public class SetupWizardDialog : Form
     public void ApplyProgressState(WizardProgressState state)
     {
         State = state;
+        if (!string.IsNullOrEmpty(state.GeminiApiKey))
+        {
+            _geminiCard.ApiKey = state.GeminiApiKey;
+        }
+        if (!string.IsNullOrEmpty(state.GeminiModel))
+        {
+            _geminiCard.SelectedModel = state.GeminiModel;
+        }
+
         if (state.ProjectFolders != null && state.ProjectFolders.Count > 0)
         {
             _ = _folderPanel.LoadFoldersAsync(state.ProjectFolders);
@@ -277,7 +302,11 @@ public class SetupWizardDialog : Form
 
         _indicator.UpdateStep(_currentStep, State.CompletedSteps);
 
-        if (_currentStep == 5)
+        if (_currentStep == 4)
+        {
+            _ = _submissionModePanel.RefreshAuthStatusAsync();
+        }
+        else if (_currentStep == 5)
         {
             _summaryPanel.RefreshSummary(State);
         }
@@ -292,17 +321,26 @@ public class SetupWizardDialog : Form
     {
         if (_currentStep == 0)
         {
-            if (_requirementPanel == null || _requirementPanel.AllRequirementsSatisfied)
+            var reqsSatisfied = _requirementPanel == null || _requirementPanel.AllRequirementsSatisfied;
+            var keyProvided = _geminiCard == null || _geminiCard.IsKeyProvided;
+
+            if (reqsSatisfied && keyProvided)
             {
                 _btnNext.Enabled = true;
-                _lblStatus.Text = "Semua requirement sistem terpenuhi.";
+                _lblStatus.Text = "Semua requirement sistem & Kunci Gemini AI siap.";
                 _lblStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else if (!reqsSatisfied)
+            {
+                _btnNext.Enabled = false;
+                var count = _requirementPanel?.UnmetCount ?? 0;
+                _lblStatus.Text = $"{count} requirement belum terpenuhi — lihat item bertanda ❌/⚠️ di bawah";
+                _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
             else
             {
                 _btnNext.Enabled = false;
-                var count = _requirementPanel.UnmetCount;
-                _lblStatus.Text = $"{count} requirement belum terpenuhi — lihat item bertanda ❌/⚠️ di atas";
+                _lblStatus.Text = "Wajib memasukkan Google AI Studio API Key untuk melanjutkan.";
                 _lblStatus.ForeColor = Color.FromArgb(220, 38, 38);
             }
         }
@@ -403,7 +441,17 @@ public class SetupWizardDialog : Form
     /// </summary>
     public async Task HandleNextClickAsync()
     {
-        if (_currentStep == 1)
+        if (_currentStep == 0)
+        {
+            if (_geminiCard != null)
+            {
+                State.GeminiApiKey = _geminiCard.ApiKey;
+                State.GeminiModel = _geminiCard.SelectedModel;
+                State.SetStepData("gemini_api_key", State.GeminiApiKey);
+                State.SetStepData("gemini_model", State.GeminiModel);
+            }
+        }
+        else if (_currentStep == 1)
         {
             State.ProjectFolders = _folderPanel.GetValidFolderPaths();
             State.SetStepData("project_folders", State.ProjectFolders);
@@ -493,7 +541,13 @@ public class SetupWizardDialog : Form
                             AllowDomains = new List<string> { "github.com", "gitlab.com", "stackoverflow.com" }
                         }
                     },
-                    WorkProfile = workProfile
+                    WorkProfile = workProfile,
+                    Llm = new LlmSettingsDto
+                    {
+                        Provider = "gemini",
+                        ApiKey = State.GeminiApiKey,
+                        Model = State.GeminiModel
+                    }
                 };
 
                 await _apiClient.SaveConfigAsync(saveReq);

@@ -37,6 +37,7 @@ public class JobRolePanel : Panel
     public bool IsBannerVisible => _pnlBanner.Visible;
     public string WarningBannerText => _lblBanner.Text;
     public int PresetCount => _presets.Count;
+    public Func<string>? ApiKeyProvider { get; set; }
 
     public event EventHandler? GateStateChanged;
 
@@ -196,7 +197,8 @@ public class JobRolePanel : Panel
 
         try
         {
-            var result = await _apiClient.PredictProfileAsync(desc);
+            var apiKey = ApiKeyProvider?.Invoke() ?? "";
+            var result = await _apiClient.PredictProfileAsync(desc, apiKey);
             if (result != null && result.Profile != null)
             {
                 var keywords = result.Profile.ExtractKeywords();

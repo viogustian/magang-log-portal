@@ -20,6 +20,7 @@ public class SummaryPanel : Panel
     public string RoleSummaryText => _lblRole.Text;
     public string SourcesSummaryText => _lblSources.Text;
     public string SubmissionSummaryText => _lblSubmission.Text;
+    public string RequirementsSummaryText => _lblRequirements.Text;
 
     public event EventHandler<int>? EditSectionRequested;
 
@@ -39,8 +40,8 @@ public class SummaryPanel : Panel
             Padding = new Padding(4)
         };
 
-        // 1. System Requirements Card (No "Ubah" needed as Step 0 is the prerequisite gate)
-        var cardReq = CreateSummaryCard("1. Requirement Sistem", out _lblRequirements, null);
+        // 1. AI Credentials & System Requirements Card
+        var cardReq = CreateSummaryCard("1. Kredensial AI & Requirement Sistem", out _lblRequirements, 0);
         _lblRequirements.Text = "✅ Semua dependensi runtime utama terpenuhi (Python, Playwright, .NET SDK, Git).";
 
         // 2. Project Folders Card
@@ -138,6 +139,19 @@ public class SummaryPanel : Panel
     public void RefreshSummary(WizardProgressState state)
     {
         if (state == null) return;
+
+        // Credentials & Requirements
+        if (!string.IsNullOrWhiteSpace(state.GeminiApiKey))
+        {
+            var key = state.GeminiApiKey.Trim();
+            var masked = key.Length > 8 ? $"{key[..4]}...{key[^4..]}" : "Tersedia";
+            var model = string.IsNullOrWhiteSpace(state.GeminiModel) ? "gemini-3.5-flash" : state.GeminiModel;
+            _lblRequirements.Text = $"🤖 Gemini API: {masked} ({model})  |  ✅ Dependensi Sistem Terpenuhi";
+        }
+        else
+        {
+            _lblRequirements.Text = "✅ Semua dependensi runtime utama terpenuhi (Python, Playwright, .NET SDK, Git).";
+        }
 
         // Folders
         if (state.ProjectFolders != null && state.ProjectFolders.Count > 0)

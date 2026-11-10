@@ -45,11 +45,14 @@ public class SummaryPanelTests
                     AppEnabled = true,
                     BrowserEnabled = false
                 },
-                ReviewMode = "review"
+                ReviewMode = "review",
+                GeminiApiKey = "AIzaSyTestKeyForSummary",
+                GeminiModel = "gemini-3.5-flash"
             };
 
             panel.RefreshSummary(state);
 
+            Assert.Contains("Gemini API", panel.RequirementsSummaryText);
             Assert.Contains(@"C:\Projects\app1", panel.FoldersSummaryText);
             Assert.Contains("Software Engineer", panel.RoleSummaryText);
             Assert.Contains("Code.exe", panel.RoleSummaryText);
@@ -69,6 +72,10 @@ public class SummaryPanelTests
             var panel = new SummaryPanel();
             int? requestedStep = null;
             panel.EditSectionRequested += (_, step) => requestedStep = step;
+
+            // Trigger edit on Requirements & AI (Step 0)
+            panel.TriggerEditSection(0);
+            Assert.Equal(0, requestedStep);
 
             // Trigger edit on Folders (Step 1)
             panel.TriggerEditSection(1);

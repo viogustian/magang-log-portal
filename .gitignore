@@ -225,3 +225,15 @@ obj/
 *.suo
 *.userosscache
 *.sln.docstates
+# Runtime Setup Wizard & Local Config Overrides
+wizard-progress.yaml
+wizard-progress*.yaml
+config.local.yaml
+*.local.yaml
+
+# .NET Publish & Packaging Artifacts
+publish/
+TestResults/
+
+# Inno Setup Compiler Default Output
+Output/

@@ -590,3 +590,11 @@ def test_get_gemini_models_with_mocked_google_api(client: TestClient) -> None:
         assert rec_model["is_recommended"] is True
 
 
+def test_delete_gemini_key_endpoint(client: TestClient) -> None:
+    res = client.post("/api/setup/delete-gemini-key")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert "message" in data
+
+

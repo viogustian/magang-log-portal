@@ -201,6 +201,13 @@ class UnregisterSchedulerResponse(BaseModel):
     message: str
 
 
+class DeleteGeminiKeyResponse(BaseModel):
+    """Response payload after deleting stored Gemini API key."""
+
+    success: bool
+    message: str
+
+
 class RecheckRequirementRequest(BaseModel):
     """Request payload for single requirement re-evaluation."""
 
@@ -365,13 +372,13 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
         if req.work_profile is not None:
             cfg.sources.app.work_profile = req.work_profile
 
-        # Persist GEMINI_API_KEY to environment and .env if non-empty
-        if req.llm.api_key and req.llm.api_key.strip():
-            clean_key = req.llm.api_key.strip()
+        # Persist or delete GEMINI_API_KEY based on payload
+        clean_key = (req.llm.api_key or "").strip() if req.llm else ""
+        root = find_repo_root()
+        env_path = root / ".env"
+        if clean_key:
             os.environ["GEMINI_API_KEY"] = clean_key
             try:
-                root = find_repo_root()
-                env_path = root / ".env"
                 existing_lines = []
                 if env_path.exists():
                     existing_lines = [
@@ -382,6 +389,17 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
                 env_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
             except Exception as env_exc:  # noqa: BLE001
                 logger.warning("Could not persist GEMINI_API_KEY to .env: %s", env_exc)
+        elif req.llm is not None and req.llm.api_key == "":
+            os.environ.pop("GEMINI_API_KEY", None)
+            try:
+                if env_path.exists():
+                    existing_lines = [
+                        line for line in env_path.read_text(encoding="utf-8").splitlines()
+                        if not line.strip().startswith("GEMINI_API_KEY=")
+                    ]
+                    env_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+            except Exception as env_exc:  # noqa: BLE001
+                logger.warning("Could not clear GEMINI_API_KEY from .env: %s", env_exc)
 
         return save_app_configuration(cfg, target_path=req.config_path)
     except Exception as exc:  # noqa: BLE001
@@ -403,13 +421,51 @@ def get_config(
     """Retrieve full active application configuration."""
     try:
         cfg = load_config(path=Path(config_path) if config_path else None)
-        return cfg.model_dump(mode="json")
+        data = cfg.model_dump(mode="json")
+
+        # Attach persisted GEMINI_API_KEY if present in environment or .env
+        key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not key:
+            root = find_repo_root()
+            env_file = root / ".env"
+            if env_file.exists():
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    if line.strip().startswith("GEMINI_API_KEY="):
+                        key = line.split("=", 1)[1].strip()
+                        break
+        if "llm" in data and isinstance(data["llm"], dict):
+            data["llm"]["api_key"] = key
+
+        return data
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to load active configuration: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load configuration: {exc}",
         ) from exc
+
+
+@router.post(
+    "/delete-gemini-key",
+    response_model=DeleteGeminiKeyResponse,
+    summary="Delete stored Gemini API key from environment and .env",
+)
+def delete_gemini_key() -> dict[str, Any]:
+    """Delete GEMINI_API_KEY from runtime environment and local .env file."""
+    os.environ.pop("GEMINI_API_KEY", None)
+    try:
+        root = find_repo_root()
+        env_path = root / ".env"
+        if env_path.exists():
+            existing_lines = [
+                line for line in env_path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().startswith("GEMINI_API_KEY=")
+            ]
+            env_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+        return {"success": True, "message": "Kunci API Gemini berhasil dihapus."}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to delete GEMINI_API_KEY: %s", exc)
+        return {"success": False, "message": f"Gagal menghapus kunci: {exc}"}
 
 
 @router.post(

@@ -21,8 +21,9 @@ public class AboutForm : Form
     public Label DeveloperGitHubLabel { get; }
     public Label DedicationLabel { get; }
 
-    public TextBox ArchitectureTextBox { get; }
-    public string ArchitectureSpecsText => ArchitectureTextBox.Text;
+    public Label ArchitectureSpecsLabel { get; }
+    public TextBox? ArchitectureTextBox => null;
+    public string ArchitectureSpecsText => ArchitectureSpecsLabel.Text;
 
     public Button GitHubButton { get; }
     public Button RepoButton { get; }
@@ -56,7 +57,7 @@ public class AboutForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        Size = new Size(680, 580);
+        Size = new Size(680, 640);
         BackColor = Color.FromArgb(248, 250, 252);
         Padding = new Padding(24, 20, 24, 20);
 
@@ -64,16 +65,16 @@ public class AboutForm : Form
         var headerPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 72,
+            Height = 90,
             BackColor = Color.White,
-            Padding = new Padding(16, 10, 16, 10),
+            Padding = new Padding(16, 12, 16, 12),
             BorderStyle = BorderStyle.FixedSingle
         };
 
         var logoBadge = new Panel
         {
-            Width = 48,
-            Height = 48,
+            Width = 56,
+            Height = 56,
             BackColor = Color.FromArgb(30, 58, 138), // Blue-900
             Dock = DockStyle.Left,
             Margin = new Padding(0, 0, 14, 0)
@@ -81,7 +82,7 @@ public class AboutForm : Form
         var lblLogo = new Label
         {
             Text = "ML",
-            Font = new Font("Segoe UI", 14f, FontStyle.Bold),
+            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
             ForeColor = Color.White,
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter
@@ -100,7 +101,7 @@ public class AboutForm : Form
             Font = new Font("Segoe UI", 11.5f, FontStyle.Bold),
             ForeColor = Color.FromArgb(15, 23, 42),
             Dock = DockStyle.Top,
-            Height = 22
+            Height = 24
         };
 
         VersionLabel = new Label
@@ -109,7 +110,7 @@ public class AboutForm : Form
             Font = new Font("Segoe UI", 9f, FontStyle.Bold),
             ForeColor = Color.FromArgb(2, 132, 199), // Sky-600
             Dock = DockStyle.Top,
-            Height = 18
+            Height = 20
         };
 
         SubtitleLabel = new Label
@@ -118,7 +119,7 @@ public class AboutForm : Form
             Font = new Font("Segoe UI", 8.5f, FontStyle.Italic),
             ForeColor = Color.FromArgb(100, 116, 139),
             Dock = DockStyle.Top,
-            Height = 16
+            Height = 20
         };
 
         titleContainer.Controls.Add(SubtitleLabel);
@@ -151,7 +152,7 @@ public class AboutForm : Form
         {
             Text = "Profil Pengembang Utama & Kreator",
             Width = 615,
-            Height = 150,
+            Height = 180,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             ForeColor = Color.FromArgb(51, 65, 85),
             Margin = new Padding(0, 0, 0, 10),
@@ -190,7 +191,7 @@ public class AboutForm : Form
             Text = "Dirancang dan dikembangkan secara independen untuk mendisiplinkan pengisian logbook " +
                    "peserta program magang ke portal Monev Kemnaker RI (MagangHub) secara transparan, " +
                    "menjaga privasi data lokal mutlak, dan bebas dari kerumitan terminal.",
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
+            Font = new Font("Segoe UI", 9f, FontStyle.Regular),
             ForeColor = Color.FromArgb(51, 65, 85),
             Dock = DockStyle.Fill
         };
@@ -206,21 +207,18 @@ public class AboutForm : Form
         {
             Text = "Spesifikasi Teknis & Arsitektur Sistem",
             Width = 615,
-            Height = 150,
+            Height = 180,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             ForeColor = Color.FromArgb(51, 65, 85),
             Margin = new Padding(0, 0, 0, 8),
-            Padding = new Padding(12, 8, 12, 8)
+            Padding = new Padding(14, 10, 14, 10)
         };
 
-        ArchitectureTextBox = new TextBox
+        ArchitectureSpecsLabel = new Label
         {
-            Multiline = true,
-            ReadOnly = true,
             Dock = DockStyle.Fill,
-            ScrollBars = ScrollBars.Vertical,
             Font = new Font("Segoe UI", 9f, FontStyle.Regular),
-            BackColor = Color.White,
+            BackColor = Color.Transparent,
             ForeColor = Color.FromArgb(30, 41, 59),
             Text = "• Desktop UI: .NET 8 Windows Forms (C# High-DPI Native UI)\r\n" +
                    "• Backend Service: Python 3.12+ FastAPI (Loopback localhost API)\r\n" +
@@ -229,7 +227,7 @@ public class AboutForm : Form
                    "• Database & Ledger: SQLite Local Immutable Ledger (data/state.db)\r\n" +
                    "• Lisensi: MIT License — Hak Cipta © 2026 Vio Gustian Nur Alamsyah."
         };
-        archGroup.Controls.Add(ArchitectureTextBox);
+        archGroup.Controls.Add(ArchitectureSpecsLabel);
         mainFlow.Controls.Add(archGroup);
 
         contentPanel.Controls.Add(mainFlow);

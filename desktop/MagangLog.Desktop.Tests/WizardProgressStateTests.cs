@@ -68,5 +68,24 @@ public class WizardProgressStateTests
         }
         Assert.Equal(5, state.GetNextIncompleteStep(6));
     }
+
+    [Fact]
+    public void TestGeminiCredentialsPropertiesInWizardProgressState()
+    {
+        var state = new WizardProgressState
+        {
+            GeminiApiKey = "AIzaSyTestApiKey123",
+            GeminiModel = "gemini-3.5-flash"
+        };
+
+        var json = JsonSerializer.Serialize(state);
+        Assert.Contains("\"gemini_api_key\":\"AIzaSyTestApiKey123\"", json);
+        Assert.Contains("\"gemini_model\":\"gemini-3.5-flash\"", json);
+
+        var restored = JsonSerializer.Deserialize<WizardProgressState>(json);
+        Assert.NotNull(restored);
+        Assert.Equal("AIzaSyTestApiKey123", restored.GeminiApiKey);
+        Assert.Equal("gemini-3.5-flash", restored.GeminiModel);
+    }
 }
 

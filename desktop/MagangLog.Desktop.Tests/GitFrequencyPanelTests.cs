@@ -144,5 +144,42 @@ public class GitFrequencyPanelTests
             return Task.CompletedTask;
         });
     }
+
+    [Fact]
+    public async Task GitFrequency_RadioButtons_MutualExclusion_NoDoubleSelection()
+    {
+        await RunStaAsync(() =>
+        {
+            var panel = new GitFrequencyPanel();
+
+            // Initially Sering is checked
+            Assert.True(panel.RadioSering.Checked);
+            Assert.False(panel.RadioJarang.Checked);
+            Assert.False(panel.RadioTidakSamaSekali.Checked);
+
+            // User clicks Jarang
+            panel.RadioJarang.Checked = true;
+            Assert.False(panel.RadioSering.Checked);
+            Assert.True(panel.RadioJarang.Checked);
+            Assert.False(panel.RadioTidakSamaSekali.Checked);
+
+            // User clicks Tidak Sama Sekali twice
+            panel.RadioTidakSamaSekali.Checked = true;
+            panel.RadioTidakSamaSekali.Checked = true;
+            Assert.False(panel.RadioSering.Checked);
+            Assert.False(panel.RadioJarang.Checked);
+            Assert.True(panel.RadioTidakSamaSekali.Checked);
+
+            // User clicks back to Sering twice
+            panel.RadioSering.Checked = true;
+            panel.RadioSering.Checked = true;
+            Assert.True(panel.RadioSering.Checked);
+            Assert.False(panel.RadioJarang.Checked);
+            Assert.False(panel.RadioTidakSamaSekali.Checked);
+
+            panel.Dispose();
+            return Task.CompletedTask;
+        });
+    }
 }
 

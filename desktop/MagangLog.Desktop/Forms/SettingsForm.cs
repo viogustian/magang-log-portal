@@ -71,6 +71,7 @@ public class SettingsForm : Form
     private readonly CheckBox _chkSat;
     private readonly CheckBox _chkSun;
     private readonly Label _lblSchedulerStatus;
+    private readonly Label _lblSchedulerDetails;
     private readonly Button _btnRegisterScheduler;
     private readonly Button _btnUnregisterScheduler;
     private readonly CheckBox _chkNotifyToast;
@@ -81,6 +82,7 @@ public class SettingsForm : Form
     private readonly TextBox _txtGeminiApiKey;
     private readonly CheckBox _chkShowApiKey;
     private readonly Button _btnTestGemini;
+    private readonly Button _btnDeleteGeminiApiKey;
     private readonly Label _lblGeminiStatus;
     private readonly ComboBox _cboGeminiModel;
     private readonly Button _btnRefreshGeminiModels;
@@ -292,6 +294,8 @@ public class SettingsForm : Form
     public string GeminiStatusText => _lblGeminiStatus.Text;
     public bool IsGeminiValid { get; private set; } = false;
     public string PortalStatusText => _lblPortalStatus.Text;
+    public string SchedulerDetailsText => _lblSchedulerDetails.Text;
+    public Button DeleteGeminiApiKeyButton => _btnDeleteGeminiApiKey;
     public ComboBox GeminiModelComboBox => _cboGeminiModel;
     public string SelectedGeminiModel
     {
@@ -345,10 +349,10 @@ public class SettingsForm : Form
             out _pnlAutoWarning, out _chkAutoConfirm);
         var tab5 = BuildTab5Scheduler(out _chkSchedulerEnabled, out _dtpReviewTime, out _dtpResumeTime,
             out _chkMon, out _chkTue, out _chkWed, out _chkThu, out _chkFri, out _chkSat, out _chkSun,
-            out _lblSchedulerStatus, out _btnRegisterScheduler, out _btnUnregisterScheduler,
+            out _lblSchedulerStatus, out _lblSchedulerDetails, out _btnRegisterScheduler, out _btnUnregisterScheduler,
             out _chkNotifyToast, out _cboReminderLeadTime, out _chkNotifyOnSuccess);
         var tab6 = BuildTab6CredentialsAndPortal(out _txtGeminiApiKey, out _chkShowApiKey, out _btnTestGemini,
-            out _lblGeminiStatus, out _cboGeminiModel, out _btnRefreshGeminiModels,
+            out _btnDeleteGeminiApiKey, out _lblGeminiStatus, out _cboGeminiModel, out _btnRefreshGeminiModels,
             out _lblPortalStatus, out _btnRefreshPortalStatus, out _btnOpenPortalLogin);
         var tab7 = BuildTab7Requirements(out _requirementPanel);
 
@@ -514,6 +518,13 @@ public class SettingsForm : Form
             if (!string.IsNullOrWhiteSpace(config.Llm.ApiKey))
             {
                 GeminiApiKey = config.Llm.ApiKey;
+                _lblGeminiStatus.Text = "🟢 Kunci API tersimpan di sistem";
+                _lblGeminiStatus.ForeColor = Color.FromArgb(22, 101, 52);
+            }
+            else
+            {
+                _lblGeminiStatus.Text = "Status: Belum diuji / belum disetel";
+                _lblGeminiStatus.ForeColor = Color.FromArgb(100, 116, 139);
             }
             if (!string.IsNullOrWhiteSpace(config.Llm.Model))
             {
@@ -655,6 +666,10 @@ public class SettingsForm : Form
                         ActiveDays = GetActiveWorkdays(),
                         TaskPrefix = "MagangLog"
                     });
+                }
+                else
+                {
+                    _ = await _apiClient.UnregisterSchedulerAsync("MagangLog");
                 }
 
                 DialogResult = DialogResult.OK;
@@ -825,13 +840,17 @@ public class SettingsForm : Form
             {
                 if (res.IsRegistered)
                 {
-                    _lblSchedulerStatus.Text = $"🟢 Terdaftar Aktif ({res.ReviewTime ?? "16:30"} & {res.ResumeTime ?? "20:00"})";
+                    _lblSchedulerStatus.Text = $"🟢 Terdaftar Aktif ({res.ReviewTime ?? "16:30"} WIB & {res.ResumeTime ?? "20:00"} WIB)";
                     _lblSchedulerStatus.ForeColor = Color.FromArgb(22, 101, 52);
+                    _lblSchedulerDetails.Text = $"Tugas Windows: {res.ReviewTaskName} ({res.ReviewTime}) & {res.ResumeTaskName} ({res.ResumeTime}) — Berjalan otomatis di latar belakang.";
+                    _lblSchedulerDetails.ForeColor = Color.FromArgb(71, 85, 105);
                 }
                 else
                 {
-                    _lblSchedulerStatus.Text = "⚪ Belum Terdaftar di Windows Task Scheduler";
+                    _lblSchedulerStatus.Text = "⚪ Tidak Ada Jadwal Aktif di Windows Task Scheduler";
                     _lblSchedulerStatus.ForeColor = Color.FromArgb(100, 116, 139);
+                    _lblSchedulerDetails.Text = "Belum ada tugas otomatis yang terdaftar di Windows Task Scheduler.";
+                    _lblSchedulerDetails.ForeColor = Color.FromArgb(148, 163, 184);
                 }
             }
         }
@@ -839,6 +858,7 @@ public class SettingsForm : Form
         {
             _lblSchedulerStatus.Text = $"⚠️ Gagal membaca status: {ex.Message}";
             _lblSchedulerStatus.ForeColor = Color.FromArgb(185, 28, 28);
+            _lblSchedulerDetails.Text = string.Empty;
         }
     }
 
@@ -856,8 +876,11 @@ public class SettingsForm : Form
             });
             if (res != null && res.Success)
             {
+                _chkSchedulerEnabled.Checked = true;
                 _lblSchedulerStatus.Text = $"🟢 Berhasil didaftarkan ({res.ReviewTime} & {res.ResumeTime})";
                 _lblSchedulerStatus.ForeColor = Color.FromArgb(22, 101, 52);
+                _lblSchedulerDetails.Text = $"Tugas Windows: MagangLog-Review ({res.ReviewTime}) & MagangLog-Resume ({res.ResumeTime}) — Berjalan otomatis.";
+                _lblSchedulerDetails.ForeColor = Color.FromArgb(71, 85, 105);
                 MessageBox.Show(this, "Jadwal Windows Task Scheduler berhasil didaftarkan / diperbarui.", "Task Scheduler", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
@@ -879,14 +902,24 @@ public class SettingsForm : Form
 
     public async Task UnregisterSchedulerAsync()
     {
+        var confirm = MessageBox.Show(this,
+            "Apakah Anda yakin ingin menghapus jadwal otomatis dari Windows Task Scheduler?",
+            "Konfirmasi Hapus Jadwal",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
         _btnUnregisterScheduler.Enabled = false;
         try
         {
             var res = await _apiClient.UnregisterSchedulerAsync("MagangLog");
             if (res != null && res.Success)
             {
-                _lblSchedulerStatus.Text = "⚪ Tugas terjadwal berhasil dihapus.";
+                _chkSchedulerEnabled.Checked = false;
+                _lblSchedulerStatus.Text = "⚪ Jadwal berhasil dihapus dari Windows Task Scheduler.";
                 _lblSchedulerStatus.ForeColor = Color.FromArgb(100, 116, 139);
+                _lblSchedulerDetails.Text = "Semua tugas terjadwal MagangLog telah dihentikan dan dihapus dari sistem.";
+                _lblSchedulerDetails.ForeColor = Color.FromArgb(148, 163, 184);
                 MessageBox.Show(this, "Jadwal Windows Task Scheduler berhasil dihapus dari sistem.", "Task Scheduler", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
@@ -903,6 +936,40 @@ public class SettingsForm : Form
         finally
         {
             _btnUnregisterScheduler.Enabled = true;
+        }
+    }
+
+    public async Task DeleteGeminiApiKeyAsync()
+    {
+        var confirm = MessageBox.Show(this,
+            "Apakah Anda yakin ingin menghapus API Key Google AI Studio yang tersimpan dari sistem?",
+            "Konfirmasi Hapus API Key",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        _btnDeleteGeminiApiKey.Enabled = false;
+        try
+        {
+            await _apiClient.DeleteGeminiKeyAsync();
+            _txtGeminiApiKey.Text = string.Empty;
+            _lblGeminiStatus.Text = "⚪ Kunci API telah dihapus dari sistem.";
+            _lblGeminiStatus.ForeColor = Color.FromArgb(100, 116, 139);
+            IsGeminiValid = false;
+            if (_activeConfig?.Llm != null)
+            {
+                _activeConfig.Llm.ApiKey = string.Empty;
+            }
+            MessageBox.Show(this, "API Key Google AI Studio berhasil dihapus.", "Kredensial Gemini", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            _lblGeminiStatus.Text = $"🔴 Gagal menghapus kunci: {ex.Message}";
+            _lblGeminiStatus.ForeColor = Color.FromArgb(185, 28, 28);
+        }
+        finally
+        {
+            _btnDeleteGeminiApiKey.Enabled = true;
         }
     }
 
@@ -1846,6 +1913,7 @@ public class SettingsForm : Form
         out CheckBox chkSat,
         out CheckBox chkSun,
         out Label lblStatus,
+        out Label lblDetails,
         out Button btnRegister,
         out Button btnUnregister,
         out CheckBox chkNotifyToast,
@@ -1980,7 +2048,7 @@ public class SettingsForm : Form
         {
             Text = "Integrasi Windows Task Scheduler",
             Dock = DockStyle.Top,
-            Height = 110,
+            Height = 130,
             Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
             ForeColor = Color.FromArgb(30, 41, 59),
             Padding = new Padding(12)
@@ -1989,16 +2057,25 @@ public class SettingsForm : Form
         lblStatus = new Label
         {
             Text = "⚪ Memeriksa status registrasi Task Scheduler...",
-            Location = new Point(16, 26),
+            Location = new Point(16, 24),
             Size = new Size(600, 22),
             Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
             ForeColor = Color.FromArgb(71, 85, 105)
         };
 
+        lblDetails = new Label
+        {
+            Text = "Memeriksa detail tugas di host Windows...",
+            Location = new Point(16, 48),
+            Size = new Size(650, 20),
+            Font = new Font(Font.FontFamily, 8f, FontStyle.Regular),
+            ForeColor = Color.FromArgb(100, 116, 139)
+        };
+
         btnRegister = new Button
         {
-            Text = "📅 Daftarkan / Perbarui Jadwal Windows",
-            Location = new Point(16, 56),
+            Text = "📅 Daftarkan / Perbarui Jadwal",
+            Location = new Point(16, 75),
             Size = new Size(245, 32),
             BackColor = Color.FromArgb(37, 99, 235),
             ForeColor = Color.White,
@@ -2011,8 +2088,8 @@ public class SettingsForm : Form
 
         btnUnregister = new Button
         {
-            Text = "🗑️ Hapus Jadwal Windows",
-            Location = new Point(275, 56),
+            Text = "🗑️ Hapus Jadwal",
+            Location = new Point(275, 75),
             Size = new Size(180, 32),
             BackColor = Color.FromArgb(241, 245, 249),
             ForeColor = Color.FromArgb(185, 28, 28),
@@ -2024,6 +2101,7 @@ public class SettingsForm : Form
         btnUnregister.Click += async (_, _) => await UnregisterSchedulerAsync();
 
         grpScheduler.Controls.Add(lblStatus);
+        grpScheduler.Controls.Add(lblDetails);
         grpScheduler.Controls.Add(btnRegister);
         grpScheduler.Controls.Add(btnUnregister);
 
@@ -2092,6 +2170,7 @@ public class SettingsForm : Form
         out TextBox txtApiKey,
         out CheckBox chkShow,
         out Button btnTest,
+        out Button btnDeleteApiKey,
         out Label lblGeminiStatus,
         out ComboBox cboGeminiModel,
         out Button btnRefreshModels,
@@ -2185,9 +2264,9 @@ public class SettingsForm : Form
 
         btnTest = new Button
         {
-            Text = "⚡ Tes Koneksi Gemini",
+            Text = "⚡ Tes Koneksi",
             Location = new Point(16, 142),
-            Size = new Size(170, 32),
+            Size = new Size(140, 32),
             BackColor = Color.FromArgb(37, 99, 235),
             ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -2197,11 +2276,25 @@ public class SettingsForm : Form
         btnTest.FlatAppearance.BorderSize = 0;
         btnTest.Click += async (_, _) => await TestGeminiConnectionAsync();
 
+        btnDeleteApiKey = new Button
+        {
+            Text = "🗑️ Hapus Kunci",
+            Location = new Point(164, 142),
+            Size = new Size(130, 32),
+            BackColor = Color.FromArgb(254, 242, 242),
+            ForeColor = Color.FromArgb(185, 28, 28),
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold),
+            Cursor = Cursors.Hand
+        };
+        btnDeleteApiKey.FlatAppearance.BorderColor = Color.FromArgb(252, 165, 165);
+        btnDeleteApiKey.Click += async (_, _) => await DeleteGeminiApiKeyAsync();
+
         lblGeminiStatus = new Label
         {
             Text = "Status: Belum diuji",
-            Location = new Point(195, 149),
-            Size = new Size(480, 22),
+            Location = new Point(304, 149),
+            Size = new Size(370, 22),
             Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
             ForeColor = Color.FromArgb(100, 116, 139)
         };
@@ -2222,6 +2315,7 @@ public class SettingsForm : Form
         grpGemini.Controls.Add(cboGeminiModel);
         grpGemini.Controls.Add(btnRefreshModels);
         grpGemini.Controls.Add(btnTest);
+        grpGemini.Controls.Add(btnDeleteApiKey);
         grpGemini.Controls.Add(lblGeminiStatus);
         grpGemini.Controls.Add(lblKeyNote);
 

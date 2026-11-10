@@ -13,11 +13,16 @@ public class GitFrequencyPanel : Panel
     private readonly RadioButton _rdoSering;
     private readonly RadioButton _rdoJarang;
     private readonly RadioButton _rdoTidakSamaSekali;
+    private bool _isUpdatingRadio = false;
 
     private readonly Panel _pnlBrowserConsent;
     private readonly CheckBox _chkAppConsent;
     private readonly CheckBox _chkBrowserConsent;
     private readonly Label _lblSourceSummary;
+
+    public RadioButton RadioSering => _rdoSering;
+    public RadioButton RadioJarang => _rdoJarang;
+    public RadioButton RadioTidakSamaSekali => _rdoTidakSamaSekali;
 
     public event EventHandler? SourcesChanged;
 
@@ -94,21 +99,30 @@ public class GitFrequencyPanel : Panel
             "Git menjadi sumber bukti utama. Aktivitas aplikasi aktif. Riwayat browser dinonaktifkan.",
             0);
         _rdoSering.Checked = true;
-        _rdoSering.CheckedChanged += (_, _) => HandleFrequencyChanged();
+        _rdoSering.CheckedChanged += (_, _) =>
+        {
+            if (_rdoSering.Checked) SelectFrequency(_rdoSering);
+        };
 
         var jarangCard = CreateOptionCard(
             out _rdoJarang,
             "Jarang — sesekali saja",
             "Kombinasi commit Git, aktivitas aplikasi desktop, dan riwayat peramban pada domain kerja yang diizinkan.",
             56);
-        _rdoJarang.CheckedChanged += (_, _) => HandleFrequencyChanged();
+        _rdoJarang.CheckedChanged += (_, _) =>
+        {
+            if (_rdoJarang.Checked) SelectFrequency(_rdoJarang);
+        };
 
         var tidakCard = CreateOptionCard(
             out _rdoTidakSamaSekali,
             "Tidak sama sekali",
             "Fokus pada aktivitas aplikasi desktop dan riwayat peramban pada domain kerja yang diizinkan. Git dinonaktifkan.",
             112);
-        _rdoTidakSamaSekali.CheckedChanged += (_, _) => HandleFrequencyChanged();
+        _rdoTidakSamaSekali.CheckedChanged += (_, _) =>
+        {
+            if (_rdoTidakSamaSekali.Checked) SelectFrequency(_rdoTidakSamaSekali);
+        };
 
         optionsPanel.Controls.Add(tidakCard);
         optionsPanel.Controls.Add(jarangCard);
@@ -265,9 +279,32 @@ public class GitFrequencyPanel : Panel
             Padding = new Padding(22, 0, 0, 0)
         };
 
+        panel.Cursor = Cursors.Hand;
+        lblDesc.Cursor = Cursors.Hand;
+        var rdoLocal = rdo;
+        panel.Click += (_, _) => SelectFrequency(rdoLocal);
+        lblDesc.Click += (_, _) => SelectFrequency(rdoLocal);
+
         panel.Controls.Add(lblDesc);
         panel.Controls.Add(rdo);
         return panel;
+    }
+
+    public void SelectFrequency(RadioButton selected)
+    {
+        if (_isUpdatingRadio) return;
+        _isUpdatingRadio = true;
+        try
+        {
+            _rdoSering.Checked = (selected == _rdoSering);
+            _rdoJarang.Checked = (selected == _rdoJarang);
+            _rdoTidakSamaSekali.Checked = (selected == _rdoTidakSamaSekali);
+        }
+        finally
+        {
+            _isUpdatingRadio = false;
+        }
+        HandleFrequencyChanged();
     }
 
     public void SetFrequency(string frequency)
@@ -275,17 +312,16 @@ public class GitFrequencyPanel : Panel
         var clean = frequency?.Trim().ToLowerInvariant();
         if (clean == "tidak_sama_sekali")
         {
-            _rdoTidakSamaSekali.Checked = true;
+            SelectFrequency(_rdoTidakSamaSekali);
         }
         else if (clean == "jarang")
         {
-            _rdoJarang.Checked = true;
+            SelectFrequency(_rdoJarang);
         }
         else
         {
-            _rdoSering.Checked = true;
+            SelectFrequency(_rdoSering);
         }
-        HandleFrequencyChanged();
     }
 
     private void HandleFrequencyChanged()

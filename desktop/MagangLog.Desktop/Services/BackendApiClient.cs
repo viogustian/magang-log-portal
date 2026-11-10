@@ -664,4 +664,21 @@ public class BackendApiClient
             return new OpenLoginResponse { Success = false, Message = ex.Message, Authenticated = false };
         }
     }
+
+    /// <summary>
+    /// Deletes stored Gemini API key from environment and .env via POST /api/setup/delete-gemini-key.
+    /// </summary>
+    public virtual async Task<bool> DeleteGeminiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/delete-gemini-key", content, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
