@@ -9,10 +9,13 @@ from magang_log.server.services.setup_service import (
     WizardProgressState,
     check_requirement_status,
     find_closest_preset,
+    inspect_scheduler_status,
     load_wizard_progress,
     predict_work_profile,
+    register_task_scheduler,
     save_wizard_progress,
     scan_system_requirements,
+    unregister_task_scheduler,
     validate_folder_paths,
     verify_gemini_connection,
 )
@@ -166,4 +169,74 @@ def test_wizard_progress_persistence_unit(tmp_path: Path) -> None:
     assert loaded.current_step == 3
     assert loaded.completed_steps == [0, 1, 2]
     assert loaded.step_data["role"] == "UI/UX Designer"
+
+
+def test_register_task_scheduler_service_validation() -> None:
+    # Invalid review_time format
+    with pytest.raises(ValueError, match="Invalid review_time format"):
+        register_task_scheduler(review_time="invalid", resume_time="20:00")
+
+    # Invalid resume_time format
+    with pytest.raises(ValueError, match="Invalid resume_time format"):
+        register_task_scheduler(review_time="16:30", resume_time="99:99")
+
+    # Success invocation with mocked subprocess
+    mock_res = MagicMock()
+    mock_res.returncode = 0
+    mock_res.stdout = "OK"
+    mock_res.stderr = ""
+    with patch("subprocess.run", return_value=mock_res):
+        res = register_task_scheduler(
+            review_time="16:45",
+            resume_time="20:15",
+            task_prefix="MagangLogTest",
+        )
+        assert res["success"] is True
+        assert res["review_time"] == "16:45"
+        assert res["resume_time"] == "20:15"
+
+
+def test_inspect_scheduler_status_service_parsing() -> None:
+    # 1. Both registered
+    def fake_subprocess_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        res = MagicMock()
+        task_name = cmd[3] if len(cmd) > 3 else ""
+        if "Review" in task_name:
+            res.returncode = 0
+            res.stdout = "TaskName: MagangLog-Review\nStart Time: 16:30:00\nScheduled Task State: Enabled\n"
+        elif "Resume" in task_name:
+            res.returncode = 0
+            res.stdout = "TaskName: MagangLog-Resume\nStart Time: 20:00:00\nScheduled Task State: Enabled\n"
+        else:
+            res.returncode = 1
+            res.stdout = ""
+        return res
+
+    with patch("subprocess.run", side_effect=fake_subprocess_run):
+        status = inspect_scheduler_status(task_prefix="MagangLog")
+        assert status["status"] == "registered"
+        assert status["is_registered"] is True
+        assert status["review_time"] == "16:30"
+        assert status["resume_time"] == "20:00"
+
+    # 2. Both unregistered
+    mock_fail = MagicMock()
+    mock_fail.returncode = 1
+    mock_fail.stdout = ""
+    with patch("subprocess.run", return_value=mock_fail):
+        status = inspect_scheduler_status(task_prefix="MagangLog")
+        assert status["status"] == "unregistered"
+        assert status["is_registered"] is False
+
+
+def test_unregister_task_scheduler_service() -> None:
+    mock_res = MagicMock()
+    mock_res.returncode = 0
+    mock_res.stdout = "Success"
+    mock_res.stderr = ""
+    with patch("subprocess.run", return_value=mock_res):
+        res = unregister_task_scheduler(task_prefix="MagangLogTest")
+        assert res["success"] is True
+        assert "berhasil" in res["message"].lower()
+
 

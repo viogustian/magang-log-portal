@@ -391,3 +391,119 @@ def test_save_config_cleans_up_wizard_progress(
         # wizard-progress.yaml should be removed after final save
         assert not progress_file.exists()
 
+
+def test_get_config_endpoint(client: TestClient) -> None:
+    response = client.get("/api/setup/config")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "timezone" in data
+    assert "workdays" in data
+    assert "portal" in data
+    assert "review" in data
+    assert "llm" in data
+    assert "sources" in data
+    assert "notify" in data
+    assert "retention_days" in data
+
+
+def test_get_scheduler_status_registered(client: TestClient) -> None:
+    mock_status = {
+        "status": "registered",
+        "is_registered": True,
+        "review_task_name": "MagangLog-Review",
+        "resume_task_name": "MagangLog-Resume",
+        "review_time": "16:30",
+        "resume_time": "20:00",
+        "diagnostic_message": "Tugas otomatis aktif terdaftar di Windows Task Scheduler.",
+    }
+    with patch(
+        "magang_log.server.routers.setup.inspect_scheduler_status",
+        return_value=mock_status,
+    ):
+        response = client.get("/api/setup/scheduler-status?task_prefix=MagangLog")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "registered"
+        assert data["is_registered"] is True
+        assert data["review_time"] == "16:30"
+        assert data["resume_time"] == "20:00"
+
+
+def test_get_scheduler_status_unregistered(client: TestClient) -> None:
+    mock_status = {
+        "status": "unregistered",
+        "is_registered": False,
+        "review_task_name": "MagangLog-Review",
+        "resume_task_name": "MagangLog-Resume",
+        "review_time": None,
+        "resume_time": None,
+        "diagnostic_message": "Tugas terjadwal belum terdaftar di Windows Task Scheduler.",
+    }
+    with patch(
+        "magang_log.server.routers.setup.inspect_scheduler_status",
+        return_value=mock_status,
+    ):
+        response = client.get("/api/setup/scheduler-status?task_prefix=MagangLog")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "unregistered"
+        assert data["is_registered"] is False
+
+
+def test_unregister_scheduler_endpoint(client: TestClient) -> None:
+    with patch(
+        "magang_log.server.routers.setup.unregister_task_scheduler",
+        return_value={"success": True, "message": "Tugas berhasil dihapus."},
+    ):
+        response = client.post(
+            "/api/setup/unregister-scheduler",
+            json={"task_prefix": "MagangLog"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "berhasil" in data["message"].lower()
+
+
+def test_register_scheduler_dual_times_and_validation(client: TestClient) -> None:
+    with patch(
+        "magang_log.server.routers.setup.register_task_scheduler",
+        return_value={
+            "success": True,
+            "task_name": "MagangLog-Review",
+            "review_time": "16:30",
+            "resume_time": "20:00",
+        },
+    ):
+        # 1. Valid dual times
+        valid_payload = {
+            "review_time": "16:30",
+            "resume_time": "20:00",
+            "task_prefix": "MagangLog",
+            "active_days": ["mon", "tue", "wed", "thu", "fri"],
+        }
+        res = client.post("/api/setup/register-scheduler", json=valid_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+        assert data["review_time"] == "16:30"
+        assert data["resume_time"] == "20:00"
+
+        # 2. Legacy payload (trigger_time only)
+        legacy_payload = {
+            "trigger_time": "17:15",
+            "task_prefix": "MagangLog",
+        }
+        res_legacy = client.post("/api/setup/register-scheduler", json=legacy_payload)
+        assert res_legacy.status_code == 200
+
+    # 3. Invalid time format should fail with 400 or 422
+    invalid_payload = {
+        "review_time": "26:99",
+        "resume_time": "20:00",
+    }
+    res_invalid = client.post("/api/setup/register-scheduler", json=invalid_payload)
+    assert res_invalid.status_code in (400, 422)
+
+

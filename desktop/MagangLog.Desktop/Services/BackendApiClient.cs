@@ -446,4 +446,112 @@ public class BackendApiClient
             return null;
         }
     }
+
+    /// <summary>
+    /// Fetches active application configuration via GET /api/setup/config.
+    /// </summary>
+    public virtual async Task<SaveConfigRequest?> GetAppConfigAsync(
+        string? configPath = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(configPath)
+                ? $"{_baseUrl}/api/setup/config"
+                : $"{_baseUrl}/api/setup/config?config_path={Uri.EscapeDataString(configPath)}";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<SaveConfigRequest>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Inspects Windows Task Scheduler registration status via GET /api/setup/scheduler-status.
+    /// </summary>
+    public virtual async Task<SchedulerStatusResponse?> GetSchedulerStatusAsync(
+        string taskPrefix = "MagangLog",
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = $"{_baseUrl}/api/setup/scheduler-status?task_prefix={Uri.EscapeDataString(taskPrefix)}";
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<SchedulerStatusResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Registers background automation in Windows Task Scheduler via POST /api/setup/register-scheduler.
+    /// </summary>
+    public virtual async Task<RegisterSchedulerResponse?> RegisterSchedulerAsync(
+        RegisterSchedulerRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var jsonPayload = JsonSerializer.Serialize(request, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/register-scheduler", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<RegisterSchedulerResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Unregisters background automation from Windows Task Scheduler via POST /api/setup/unregister-scheduler.
+    /// </summary>
+    public virtual async Task<UnregisterSchedulerResponse?> UnregisterSchedulerAsync(
+        string taskPrefix = "MagangLog",
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new UnregisterSchedulerRequest { TaskPrefix = taskPrefix };
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/setup/unregister-scheduler", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<UnregisterSchedulerResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }

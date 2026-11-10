@@ -497,5 +497,125 @@ public class BackendApiClientTests
         Assert.Null(response);
         Assert.Single(handler.SentRequests);
     }
+
+    [Fact]
+    public async Task TestGetAppConfigAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "timezone": "Asia/Jakarta",
+            "workdays": ["mon", "tue", "wed", "thu", "fri"],
+            "review": {
+                "mode": "review",
+                "auto_if_confident": false
+            },
+            "sources": {
+                "git": { "enabled": true, "repositories": ["C:/repos/test"] },
+                "browser": { "enabled": false, "allow_domains": [] },
+                "app": { "enabled": true }
+            }
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var config = await client.GetAppConfigAsync();
+
+        Assert.NotNull(config);
+        Assert.Equal("Asia/Jakarta", config.Timezone);
+        Assert.Equal(5, config.Workdays.Count);
+        Assert.True(config.Sources.Git.Enabled);
+        Assert.Single(config.Sources.Git.Repositories);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/config", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestGetSchedulerStatusAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "status": "registered",
+            "is_registered": true,
+            "review_task_name": "MagangLog-Review",
+            "resume_task_name": "MagangLog-Resume",
+            "review_time": "16:30",
+            "resume_time": "20:00",
+            "diagnostic_message": "Tugas otomatis aktif terdaftar."
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var status = await client.GetSchedulerStatusAsync("MagangLog");
+
+        Assert.NotNull(status);
+        Assert.Equal("registered", status.Status);
+        Assert.True(status.IsRegistered);
+        Assert.Equal("16:30", status.ReviewTime);
+        Assert.Equal("20:00", status.ResumeTime);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/scheduler-status", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestRegisterSchedulerAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "task_name": "MagangLog-Review",
+            "review_time": "16:30",
+            "resume_time": "20:00"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var req = new RegisterSchedulerRequest
+        {
+            ReviewTime = "16:30",
+            ResumeTime = "20:00",
+            TaskPrefix = "MagangLog"
+        };
+
+        var response = await client.RegisterSchedulerAsync(req);
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Equal("16:30", response.ReviewTime);
+        Assert.Equal("20:00", response.ResumeTime);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/register-scheduler", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestUnregisterSchedulerAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "message": "Tugas terjadwal berhasil dihapus."
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.UnregisterSchedulerAsync("MagangLog");
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Contains("berhasil dihapus", response.Message);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/unregister-scheduler", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

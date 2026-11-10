@@ -744,21 +744,30 @@ def save_app_configuration(
 
 
 def register_task_scheduler(
-    trigger_time: str,
+    trigger_time: str | None = None,
+    review_time: str = "16:30",
+    resume_time: str = "20:00",
+    active_days: list[str] | None = None,
     task_prefix: str = "MagangLog",
     root_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Register daily execution task via Windows Task Scheduler."""
-    clean_time = trigger_time.strip()
-    if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", clean_time):
-        raise ValueError("Invalid trigger_time format. Expected HH:MM (e.g. '17:00').")
+    """Register daily execution tasks via Windows Task Scheduler.
+
+    Supports dual execution times: afternoon review and evening resume.
+    """
+    target_review = (trigger_time.strip() if trigger_time else review_time).strip()
+    target_resume = resume_time.strip()
+
+    for t_name, val in [("review_time", target_review), ("resume_time", target_resume)]:
+        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", val):
+            raise ValueError(f"Invalid {t_name} format. Expected HH:MM (e.g. '16:30'): {val!r}")
 
     root = root_path or find_repo_root()
     script_candidates = [
-        root / "scripts" / "register_scheduler.ps1",
         root / "scripts" / "install_task.ps1",
+        root / "scripts" / "register_scheduler.ps1",
     ]
-    script_path = next((p for p in script_candidates if p.exists()), script_candidates[-1])
+    script_path = next((p for p in script_candidates if p.exists()), script_candidates[0])
 
     ps_bin = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
 
@@ -772,7 +781,9 @@ def register_task_scheduler(
         str(script_path),
         "-Install",
         "-ReviewTime",
-        clean_time,
+        target_review,
+        "-ResumeTime",
+        target_resume,
         "-TaskPrefix",
         task_prefix,
     ]
@@ -790,5 +801,156 @@ def register_task_scheduler(
         raise RuntimeError(f"Task Scheduler registration failed: {err}")
 
     task_name = f"{task_prefix}-Review"
-    logger.info("Task Scheduler registered successfully: %s at %s", task_name, clean_time)
-    return {"success": True, "task_name": task_name}
+    logger.info(
+        "Task Scheduler registered successfully: %s (Review: %s, Resume: %s)",
+        task_name,
+        target_review,
+        target_resume,
+    )
+    return {
+        "success": True,
+        "task_name": task_name,
+        "review_time": target_review,
+        "resume_time": target_resume,
+    }
+
+
+def inspect_scheduler_status(
+    task_prefix: str = "MagangLog",
+    root_path: Path | None = None,
+) -> dict[str, Any]:
+    """Inspect registration status of MagangLog tasks in Windows Task Scheduler."""
+    review_task = f"{task_prefix}-Review"
+    resume_task = f"{task_prefix}-Resume"
+
+    def _query_task(task_name: str) -> dict[str, Any]:
+        schtasks_bin = shutil.which("schtasks") or "schtasks"
+        try:
+            res = subprocess.run(
+                [schtasks_bin, "/query", "/tn", task_name, "/v", "/fo", "list"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if res.returncode != 0:
+                return {"exists": False}
+
+            info: dict[str, str] = {}
+            for line in res.stdout.splitlines():
+                if ":" in line:
+                    parts = line.split(":", 1)
+                    info[parts[0].strip().lower()] = parts[1].strip()
+
+            start_time = info.get("start time")
+            time_str = None
+            if start_time:
+                m = re.match(r"^(\d{1,2}:\d{2})", start_time)
+                if m:
+                    time_str = m.group(1).zfill(5)
+
+            state = info.get("scheduled task state", "").lower()
+            is_enabled = "enabled" in state or "ready" in info.get("status", "").lower()
+
+            return {
+                "exists": True,
+                "enabled": is_enabled,
+                "time": time_str,
+                "raw": info,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to query task %s: %s", task_name, exc)
+            return {"exists": False, "error": str(exc)}
+
+    review_info = _query_task(review_task)
+    resume_info = _query_task(resume_task)
+
+    has_review = review_info.get("exists", False)
+    has_resume = resume_info.get("exists", False)
+
+    if has_review and has_resume:
+        status_val = "registered"
+        is_reg = True
+        review_time = review_info.get("time") or "16:30"
+        resume_time = resume_info.get("time") or "20:00"
+        msg = f"Seluruh tugas terjadwal aktif terdaftar di Windows Task Scheduler (Review: {review_time}, Resume: {resume_time})."
+    elif has_review or has_resume:
+        status_val = "needs_update"
+        is_reg = False
+        review_time = review_info.get("time")
+        resume_time = resume_info.get("time")
+        msg = "Salah satu tugas terjadwal tidak ditemukan atau belum aktif. Disarankan mendaftarkan ulang."
+    else:
+        status_val = "unregistered"
+        is_reg = False
+        review_time = None
+        resume_time = None
+        msg = "Tugas terjadwal belum terdaftar di Windows Task Scheduler."
+
+    return {
+        "status": status_val,
+        "is_registered": is_reg,
+        "review_task_name": review_task,
+        "resume_task_name": resume_task,
+        "review_time": review_time,
+        "resume_time": resume_time,
+        "diagnostic_message": msg,
+    }
+
+
+def unregister_task_scheduler(
+    task_prefix: str = "MagangLog",
+    root_path: Path | None = None,
+) -> dict[str, Any]:
+    """Unregister scheduled tasks from Windows Task Scheduler."""
+    root = root_path or find_repo_root()
+    script_candidates = [
+        root / "scripts" / "install_task.ps1",
+    ]
+    script_path = next((p for p in script_candidates if p.exists()), None)
+
+    # 1. Try running install_task.ps1 -Uninstall
+    if script_path and script_path.exists():
+        ps_bin = shutil.which("powershell") or shutil.which("pwsh") or "powershell"
+        cmd = [
+            ps_bin,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-Uninstall",
+            "-TaskPrefix",
+            task_prefix,
+        ]
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if res.returncode == 0:
+            logger.info("Task Scheduler uninstalled via install_task.ps1 for prefix %s", task_prefix)
+            return {
+                "success": True,
+                "message": f"Tugas terjadwal dengan prefix '{task_prefix}' berhasil dihapus dari Windows Task Scheduler.",
+            }
+
+    # 2. Fallback directly via schtasks /delete
+    schtasks_bin = shutil.which("schtasks") or "schtasks"
+    for name in [f"{task_prefix}-Review", f"{task_prefix}-Resume"]:
+        subprocess.run(
+            [schtasks_bin, "/delete", "/tn", name, "/f"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+
+    logger.info("Task Scheduler uninstalled via schtasks for prefix %s", task_prefix)
+    return {
+        "success": True,
+        "message": f"Tugas terjadwal dengan prefix '{task_prefix}' berhasil dihapus dari Windows Task Scheduler.",
+    }

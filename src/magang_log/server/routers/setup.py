@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...settings import (
@@ -18,6 +19,7 @@ from ...settings import (
     ReviewSettings,
     RulesSettings,
     SourcesSettings,
+    load_config,
     normalize_workdays,
 )
 from ...workprofile import WorkProfile, load_presets
@@ -27,6 +29,7 @@ from ..services.setup_service import (
     PredictProfileResponse,
     RequirementItem,
     WizardProgressState,
+    inspect_scheduler_status,
     load_wizard_progress,
     predict_work_profile,
     recheck_system_requirement,
@@ -35,6 +38,7 @@ from ..services.setup_service import (
     save_wizard_progress,
     scan_system_requirements,
     scan_workspace_repos,
+    unregister_task_scheduler,
     validate_folder_paths,
     verify_gemini_connection,
 )
@@ -116,8 +120,19 @@ class SaveConfigResponse(BaseModel):
 class RegisterSchedulerRequest(BaseModel):
     """Request payload for Windows Task Scheduler registration."""
 
-    trigger_time: str = Field(..., description="Daily trigger time in HH:MM format (e.g. '17:00')")
+    trigger_time: str | None = Field(default=None, description="Legacy daily trigger time")
+    review_time: str = Field(default="16:30", description="Afternoon review trigger time in HH:MM format (e.g. '16:30')")
+    resume_time: str = Field(default="20:00", description="Evening resume trigger time in HH:MM format (e.g. '20:00')")
+    active_days: list[str] | None = Field(default=None, description="Active working days for the schedule")
     task_prefix: str = Field(default="MagangLog", description="Prefix for scheduled tasks")
+
+    @field_validator("review_time", "resume_time")
+    @classmethod
+    def validate_time_format(cls, v: str) -> str:
+        s = v.strip()
+        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", s):
+            raise ValueError(f"Invalid time format: {v!r}. Expected 24-hour HH:MM format (e.g. '16:30').")
+        return s
 
 
 class RegisterSchedulerResponse(BaseModel):
@@ -125,6 +140,33 @@ class RegisterSchedulerResponse(BaseModel):
 
     success: bool
     task_name: str
+    review_time: str = "16:30"
+    resume_time: str = "20:00"
+
+
+class SchedulerStatusResponse(BaseModel):
+    """Status information of registered background tasks."""
+
+    status: str = Field(..., description="Registration state: registered | needs_update | unregistered")
+    is_registered: bool
+    review_task_name: str
+    resume_task_name: str
+    review_time: str | None = None
+    resume_time: str | None = None
+    diagnostic_message: str
+
+
+class UnregisterSchedulerRequest(BaseModel):
+    """Request payload for unregistering background tasks."""
+
+    task_prefix: str = Field(default="MagangLog", description="Task prefix to unregister")
+
+
+class UnregisterSchedulerResponse(BaseModel):
+    """Response payload after unregistering background tasks."""
+
+    success: bool
+    message: str
 
 
 class RecheckRequirementRequest(BaseModel):
@@ -280,16 +322,39 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
         ) from exc
 
 
+@router.get(
+    "/config",
+    response_model=dict[str, Any],
+    summary="Get active application configuration",
+)
+def get_config(
+    config_path: str | None = Query(default=None, description="Optional custom config.yaml path"),
+) -> dict[str, Any]:
+    """Retrieve full active application configuration."""
+    try:
+        cfg = load_config(path=Path(config_path) if config_path else None)
+        return cfg.model_dump(mode="json")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to load active configuration: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load configuration: {exc}",
+        ) from exc
+
+
 @router.post(
     "/register-scheduler",
     response_model=RegisterSchedulerResponse,
     summary="Register daily background automation via Windows Task Scheduler",
 )
 def register_scheduler(req: RegisterSchedulerRequest) -> dict[str, Any]:
-    """Register Task Scheduler job with given trigger time."""
+    """Register Task Scheduler job with review and resume trigger times."""
     try:
         return register_task_scheduler(
             trigger_time=req.trigger_time,
+            review_time=req.review_time,
+            resume_time=req.resume_time,
+            active_days=req.active_days,
             task_prefix=req.task_prefix,
         )
     except ValueError as exc:
@@ -302,6 +367,42 @@ def register_scheduler(req: RegisterSchedulerRequest) -> dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/scheduler-status",
+    response_model=SchedulerStatusResponse,
+    summary="Check Windows Task Scheduler registration status",
+)
+def get_scheduler_status(
+    task_prefix: str = Query(default="MagangLog", description="Prefix for scheduled tasks"),
+) -> dict[str, Any]:
+    """Inspect whether background review and resume tasks are registered in host system."""
+    try:
+        return inspect_scheduler_status(task_prefix=task_prefix)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to inspect scheduler status: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Scheduler inspection error: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/unregister-scheduler",
+    response_model=UnregisterSchedulerResponse,
+    summary="Remove scheduled background automation tasks from Windows Task Scheduler",
+)
+def unregister_scheduler(req: UnregisterSchedulerRequest) -> dict[str, Any]:
+    """Unregister scheduled tasks from Windows Task Scheduler."""
+    try:
+        return unregister_task_scheduler(task_prefix=req.task_prefix)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to unregister task scheduler: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unregister scheduler: {exc}",
         ) from exc
 
 
