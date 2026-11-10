@@ -31,6 +31,7 @@ public class MainDashboardForm : Form
     public string PortalUrl { get; set; } = "https://monev.maganghub.kemnaker.go.id/dashboard/riwayat";
 
     public Action<DayDetailForm>? DayDetailShower { get; set; }
+    public Action<AboutForm>? AboutDialogShower { get; set; }
 
     public Action<string> UrlOpener { get; set; } = url =>
     {
@@ -159,6 +160,7 @@ public class MainDashboardForm : Form
         };
         CalendarPanel.OnDaySelected += async cell => await ShowDayDetailAsync(cell);
         DayDetailShower = form => form.ShowDialog(this);
+        AboutDialogShower = form => form.ShowDialog(this);
 
         // 4. Middle Responsive Content (SplitContainer)
         MainSplitContainer = new SplitContainer
@@ -355,11 +357,8 @@ public class MainDashboardForm : Form
     /// </summary>
     public void LaunchAbout()
     {
-        MessageBox.Show(
-            "MagangLog Portal — Local Dashboard v2.0.0\nLead Developer: VIO GUSTIAN NUR ALAMSYAH (@viogustian)\nHak Cipta © 2026 Vio Gustian Nur Alamsyah.",
-            "Tentang MagangLog Portal",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        using var aboutForm = new AboutForm();
+        AboutDialogShower?.Invoke(aboutForm);
     }
 
     /// <summary>

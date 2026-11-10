@@ -659,5 +659,26 @@ public class MainDashboardFormTests
             form?.Dispose();
         }
     }
+
+    [Fact]
+    public void TestMainDashboardForm_LaunchAbout_InvokesAboutDialogShower()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+
+            AboutForm? capturedDialog = null;
+            form.AboutDialogShower = dialog => capturedDialog = dialog;
+
+            form.LaunchAbout();
+
+            Assert.NotNull(capturedDialog);
+            Assert.Equal("Tentang Pengembang & Arsitektur Sistem", capturedDialog.Text);
+            Assert.Contains("VIO GUSTIAN NUR ALAMSYAH", capturedDialog.DeveloperNameLabel.Text);
+            Assert.Contains("v2.0.0", capturedDialog.VersionLabel.Text);
+        });
+    }
 }
 
