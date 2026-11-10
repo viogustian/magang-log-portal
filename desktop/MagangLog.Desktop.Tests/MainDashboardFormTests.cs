@@ -680,5 +680,25 @@ public class MainDashboardFormTests
             Assert.Contains("v2.0.0", capturedDialog.VersionLabel.Text);
         });
     }
+
+    [Fact]
+    public void TestMainDashboardForm_LaunchSettings_InvokesSettingsDialogShower()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+
+            SettingsForm? capturedDialog = null;
+            form.SettingsDialogShower = dialog => capturedDialog = dialog;
+
+            form.LaunchSettings();
+
+            Assert.NotNull(capturedDialog);
+            Assert.Equal("Pengaturan Konfigurasi — MagangLog Portal", capturedDialog.Text);
+            Assert.Equal(7, capturedDialog.TabControl.TabPages.Count);
+        });
+    }
 }
 

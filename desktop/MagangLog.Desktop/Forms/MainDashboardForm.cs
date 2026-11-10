@@ -32,6 +32,7 @@ public class MainDashboardForm : Form
 
     public Action<DayDetailForm>? DayDetailShower { get; set; }
     public Action<AboutForm>? AboutDialogShower { get; set; }
+    public Action<SettingsForm>? SettingsDialogShower { get; set; }
 
     public Action<string> UrlOpener { get; set; } = url =>
     {
@@ -161,6 +162,7 @@ public class MainDashboardForm : Form
         CalendarPanel.OnDaySelected += async cell => await ShowDayDetailAsync(cell);
         DayDetailShower = form => form.ShowDialog(this);
         AboutDialogShower = form => form.ShowDialog(this);
+        SettingsDialogShower = form => form.ShowDialog(this);
 
         // 4. Middle Responsive Content (SplitContainer)
         MainSplitContainer = new SplitContainer
@@ -345,11 +347,8 @@ public class MainDashboardForm : Form
     /// </summary>
     public void LaunchSettings()
     {
-        MessageBox.Show(
-            "Dialog Pengaturan akan tersedia pada pembaruan berikutnya.",
-            "Pengaturan",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        using var settingsForm = new SettingsForm(_apiClient);
+        SettingsDialogShower?.Invoke(settingsForm);
     }
 
     /// <summary>
