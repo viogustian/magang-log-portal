@@ -288,5 +288,114 @@ public class BackendApiClientTests
         Assert.NotNull(items);
         Assert.Empty(items);
     }
+
+    [Fact]
+    public async Task TestGetTodayEntryAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "entry_id": "entry-1",
+            "work_date": "2026-11-10",
+            "kehadiran": "Hadir",
+            "aktivitas": "Membuat fitur editor draf",
+            "pembelajaran": "WinForms .NET 8",
+            "kendala": "Tidak ada",
+            "status": "DRAFTED",
+            "validation_passed": true,
+            "validation_errors": []
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var entry = await client.GetTodayEntryAsync("2026-11-10");
+
+        Assert.NotNull(entry);
+        Assert.Equal("entry-1", entry.EntryId);
+        Assert.Equal("Hadir", entry.Kehadiran);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.Contains("/api/entry/today", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestEditEntryAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "validation_passed": true,
+            "validation_errors": []
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var req = new EditEntryRequest
+        {
+            WorkDate = "2026-11-10",
+            Kehadiran = "Hadir",
+            Aktivitas = new string('A', 150),
+            Pembelajaran = new string('B', 150),
+            Kendala = new string('C', 150)
+        };
+
+        var response = await client.EditEntryAsync(req);
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/entry/edit", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestDraftEntryAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "validation_passed": true,
+            "validation_errors": []
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.DraftEntryAsync("2026-11-10");
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/entry/draft", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestApproveEntryAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "final_status": "SUDAH_TERKIRIM",
+            "error_message": null
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.ApproveEntryAsync("2026-11-10", dryRun: false);
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.Equal("SUDAH_TERKIRIM", response.FinalStatus);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/entry/approve", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

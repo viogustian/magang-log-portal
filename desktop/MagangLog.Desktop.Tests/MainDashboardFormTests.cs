@@ -113,6 +113,8 @@ public class MainDashboardFormTests
             Assert.NotNull(form.MainSplitContainer);
             Assert.NotNull(form.CalendarPanel);
             Assert.NotNull(form.EvidencePanel);
+            Assert.NotNull(form.DraftEditor);
+            Assert.Contains(form.DraftEditor, form.MainSplitContainer.Panel1.Controls.Cast<Control>());
             Assert.Contains(form.EvidencePanel, form.MainSplitContainer.Panel2.Controls.Cast<Control>());
         });
     }
@@ -233,6 +235,76 @@ public class MainDashboardFormTests
             Assert.Single(form.EvidencePanel.AllItems);
             Assert.Equal("feat: timeline grid", form.EvidencePanel.AllItems[0].Title);
             Assert.Single(form.EvidencePanel.EvidenceGrid.Rows);
+        }
+        finally
+        {
+            form?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task TestRefreshStatusAsyncUpdatesDraftEditor()
+    {
+        var statusJson = """
+        {
+            "target_date": "2026-11-10",
+            "status": "SIAP REVIEW",
+            "is_workday": true,
+            "is_holiday": false,
+            "has_submitted_entry": false,
+            "needs_user_action": true
+        }
+        """;
+        var entryJson = """
+        {
+            "entry_id": "entry-today",
+            "work_date": "2026-11-10",
+            "kehadiran": "Hadir",
+            "aktivitas": "Melakukan implementasi komponen UI draf reviewer dan character counting.",
+            "pembelajaran": "Memahami pola MVVM dan WinForms layout flow panel.",
+            "kendala": "Integrasi asynchronous event perlu penanganan STA thread cermat.",
+            "status": "DRAFTED",
+            "validation_passed": true,
+            "validation_errors": []
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("/api/status/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(statusJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            if (req.RequestUri!.AbsolutePath.Contains("/api/entry/today"))
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(entryJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"items\":[]}", System.Text.Encoding.UTF8, "application/json")
+            };
+        });
+
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        MainDashboardForm? form = null;
+        RunSta(() =>
+        {
+            form = new MainDashboardForm(client);
+        });
+
+        try
+        {
+            await form!.RefreshStatusAsync();
+
+            Assert.Equal("Melakukan implementasi komponen UI draf reviewer dan character counting.", form.DraftEditor.AktivitasTextBox.Text);
+            Assert.Equal("Memahami pola MVVM dan WinForms layout flow panel.", form.DraftEditor.PembelajaranTextBox.Text);
         }
         finally
         {

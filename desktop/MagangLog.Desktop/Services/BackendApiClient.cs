@@ -281,4 +281,117 @@ public class BackendApiClient
             return new List<EvidenceItem>();
         }
     }
+
+    /// <summary>
+    /// Fetch today's active entry details via GET /api/entry/today.
+    /// Returns null if not found (404) or on network failure.
+    /// </summary>
+    public virtual async Task<EntryDetailResponse?> GetTodayEntryAsync(
+        string? dateStr = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(dateStr)
+                ? $"{_baseUrl}/api/entry/today"
+                : $"{_baseUrl}/api/entry/today?date={Uri.EscapeDataString(dateStr)}";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<EntryDetailResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Save inline draft edits via POST /api/entry/edit.
+    /// </summary>
+    public virtual async Task<EditEntryResponse?> EditEntryAsync(
+        EditEntryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var jsonPayload = JsonSerializer.Serialize(request, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/entry/edit", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<EditEntryResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Request fresh Gemini AI draft via POST /api/entry/draft.
+    /// </summary>
+    public virtual async Task<DraftEntryResponse?> DraftEntryAsync(
+        string? dateStr = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new DraftEntryRequest { WorkDate = dateStr };
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/entry/draft", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<DraftEntryResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Approve and submit validated draft to MagangHub portal via POST /api/entry/approve.
+    /// </summary>
+    public virtual async Task<ApproveEntryResponse?> ApproveEntryAsync(
+        string? dateStr = null,
+        bool dryRun = false,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new ApproveEntryRequest { WorkDate = dateStr, DryRun = dryRun };
+            var jsonPayload = JsonSerializer.Serialize(payload, JsonOptions);
+            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/entry/approve", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<ApproveEntryResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }

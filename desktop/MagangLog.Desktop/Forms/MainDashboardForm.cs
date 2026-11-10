@@ -21,6 +21,7 @@ public class MainDashboardForm : Form
     public SplitContainer MainSplitContainer { get; }
     public Panel CalendarPanel { get; }
     public EvidencePanel EvidencePanel { get; }
+    public DraftEditorPanel DraftEditor { get; }
     public System.Windows.Forms.Timer PollingTimer { get; }
 
     public bool OnboardingComplete { get; set; } = false;
@@ -184,24 +185,9 @@ public class MainDashboardForm : Form
         };
 
         // Left Panel (Panel1: Draft Editor & Quick Notes)
-        var leftTableLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            RowCount = 1,
-            ColumnCount = 1,
-            Padding = new Padding(16),
-            BackColor = Color.FromArgb(248, 250, 252)
-        };
-        var lblDraftPlaceholder = new Label
-        {
-            Text = "Area Peninjauan & Penyuntingan Draf Logbook (Langkah Selanjutnya)",
-            Font = new Font(Font.FontFamily, 10f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(100, 116, 139),
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-        leftTableLayout.Controls.Add(lblDraftPlaceholder);
-        MainSplitContainer.Panel1.Controls.Add(leftTableLayout);
+        DraftEditor = new DraftEditorPanel(_apiClient);
+        DraftEditor.OnDraftUpdated += async () => await RefreshStatusAsync();
+        MainSplitContainer.Panel1.Controls.Add(DraftEditor);
 
         // Right Panel (Panel2: Evidence Feed)
         EvidencePanel = new EvidencePanel();
@@ -248,11 +234,13 @@ public class MainDashboardForm : Form
         {
             var statusTask = _apiClient.GetTodayStatusAsync();
             var evidenceTask = _apiClient.GetEvidenceTodayAsync();
+            var entryTask = _apiClient.GetTodayEntryAsync();
 
-            await Task.WhenAll(statusTask, evidenceTask);
+            await Task.WhenAll(statusTask, evidenceTask, entryTask);
 
             var status = await statusTask;
             var evidence = await evidenceTask;
+            var entry = await entryTask;
 
             if (status == null)
             {
@@ -264,11 +252,13 @@ public class MainDashboardForm : Form
             }
 
             EvidencePanel.SetEvidenceItems(evidence);
+            DraftEditor.LoadEntry(entry);
         }
         catch (Exception)
         {
             StatusBanner.UpdateOffline();
             EvidencePanel.SetEvidenceItems(null);
+            DraftEditor.LoadEntry(null);
         }
     }
 
