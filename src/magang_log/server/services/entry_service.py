@@ -248,8 +248,10 @@ def regenerate_draft(
     notes = st.get_notes_for_date(d)
 
     model_name = (
-        cfg.llm.model if hasattr(cfg, "llm") and hasattr(cfg.llm, "model") else "gemini-2.5-flash"
+        cfg.llm.model if hasattr(cfg, "llm") and hasattr(cfg.llm, "model") else "gemini-3.5-flash"
     )
+    if model_name in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        model_name = "gemini-3.5-flash"
 
     client = drafter_client
     if client is None:

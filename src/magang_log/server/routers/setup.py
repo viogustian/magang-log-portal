@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from ...settings import (
     ReviewSettings,
     RulesSettings,
     SourcesSettings,
+    find_repo_root,
     load_config,
     normalize_workdays,
 )
@@ -83,6 +85,19 @@ class DiscoveredRepoResponse(BaseModel):
     is_git: bool
 
 
+class SaveConfigLLMSettings(BaseModel):
+    """LLM configuration payload matching LLMSettings with optional api_key."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = "gemini"
+    model: str = "gemini-3.5-flash"
+    api_key: str | None = None
+    temperature: float = 0.2
+    max_input_tokens: int = 6000
+    daily_token_budget: int = 20000
+
+
 class SaveConfigRequest(BaseModel):
     """Unified configuration payload matching AppConfig schema."""
 
@@ -95,7 +110,7 @@ class SaveConfigRequest(BaseModel):
     portal: PortalSettings = Field(default_factory=PortalSettings)
     rules: RulesSettings = Field(default_factory=RulesSettings)
     review: ReviewSettings = Field(default_factory=ReviewSettings)
-    llm: LLMSettings = Field(default_factory=LLMSettings)
+    llm: SaveConfigLLMSettings = Field(default_factory=SaveConfigLLMSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
     notify: NotifySettings = Field(default_factory=NotifySettings)
     retention_days: RetentionDaysSettings = Field(default_factory=RetentionDaysSettings)
@@ -296,6 +311,14 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
     """Validate and atomically persist configuration to disk."""
     try:
         # Build clean AppConfig
+        llm_clean = LLMSettings(
+            provider=req.llm.provider,
+            model=req.llm.model,
+            temperature=req.llm.temperature,
+            max_input_tokens=req.llm.max_input_tokens,
+            daily_token_budget=req.llm.daily_token_budget,
+        )
+
         cfg = AppConfig(
             timezone=req.timezone,
             workdays=req.workdays,
@@ -304,7 +327,7 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
             portal=req.portal,
             rules=req.rules,
             review=req.review,
-            llm=req.llm,
+            llm=llm_clean,
             sources=req.sources,
             notify=req.notify,
             retention_days=req.retention_days,
@@ -312,6 +335,24 @@ def save_config(req: SaveConfigRequest) -> dict[str, Any]:
 
         if req.work_profile is not None:
             cfg.sources.app.work_profile = req.work_profile
+
+        # Persist GEMINI_API_KEY to environment and .env if non-empty
+        if req.llm.api_key and req.llm.api_key.strip():
+            clean_key = req.llm.api_key.strip()
+            os.environ["GEMINI_API_KEY"] = clean_key
+            try:
+                root = find_repo_root()
+                env_path = root / ".env"
+                existing_lines = []
+                if env_path.exists():
+                    existing_lines = [
+                        line for line in env_path.read_text(encoding="utf-8").splitlines()
+                        if not line.strip().startswith("GEMINI_API_KEY=")
+                    ]
+                existing_lines.append(f"GEMINI_API_KEY={clean_key}")
+                env_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+            except Exception as env_exc:  # noqa: BLE001
+                logger.warning("Could not persist GEMINI_API_KEY to .env: %s", env_exc)
 
         return save_app_configuration(cfg, target_path=req.config_path)
     except Exception as exc:  # noqa: BLE001

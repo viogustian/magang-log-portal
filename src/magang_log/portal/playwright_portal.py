@@ -159,7 +159,7 @@ class PlaywrightPortal(AbstractContextManager["PlaywrightPortal"]):
             sel.history_heading(self.page).wait_for(state="visible", timeout=3000)
         except PlaywrightTimeout:
             # Jika Nuxt SPA me-redirect cold-load ke /dashboard (Beranda), klik menu 'Riwayat'
-            riwayat_nav = self.page.locator("text=Riwayat").first
+            riwayat_nav = sel.riwayat_nav_link(self.page)
             if riwayat_nav.is_visible():
                 riwayat_nav.click()
             try:

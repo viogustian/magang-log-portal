@@ -64,3 +64,4 @@ public class OpenLoginResponse
     [JsonPropertyName("authenticated")]
     public bool Authenticated { get; set; }
 }
+

@@ -117,7 +117,7 @@ class DraftResult:
 
     draft_json: str
     prompt_version: str = "v2"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"
     tokens_in: int = 0
     tokens_out: int = 0
 
@@ -278,7 +278,7 @@ class ArtifactStore:
         if isinstance(draft, LogEntryDraft):
             draft_json_str = draft.model_dump_json()
             prompt_ver = getattr(draft, "prompt_version", "v1")
-            mod = getattr(draft, "model", "gemini-2.5-flash")
+            mod = getattr(draft, "model", "gemini-3.5-flash")
             tok_in = 0
             tok_out = 0
         else:
@@ -307,7 +307,7 @@ class ArtifactStore:
             return DraftResult(
                 draft_json=data["draft_json"],
                 prompt_version=data.get("prompt_version", "v2"),
-                model=data.get("model", "gemini-2.5-flash"),
+                model=data.get("model", "gemini-3.5-flash"),
                 tokens_in=data.get("tokens_in", 0),
                 tokens_out=data.get("tokens_out", 0),
             )

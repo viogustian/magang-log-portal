@@ -74,7 +74,7 @@ public class LlmSettingsDto
     public string Provider { get; set; } = "gemini";
 
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "gemini-2.5-flash";
+    public string Model { get; set; } = "gemini-3.5-flash";
 
     [JsonPropertyName("api_key")]
     public string ApiKey { get; set; } = string.Empty;

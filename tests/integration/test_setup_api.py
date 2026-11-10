@@ -50,7 +50,7 @@ def test_test_gemini_valid_key(client: TestClient) -> None:
 
         response = client.post("/api/setup/test-gemini", json={"api_key": "valid-api-key"})
         assert response.status_code == 200
-        assert response.json() == {"valid": True, "model": "gemini-2.5-flash"}
+        assert response.json() == {"valid": True, "model": "gemini-3.5-flash"}
 
 
 def test_test_gemini_invalid_key_http_400(client: TestClient) -> None:
@@ -170,6 +170,32 @@ def test_save_config_endpoint_success(
     assert target_config.exists()
     saved_text = target_config.read_text(encoding="utf-8")
     assert "Asia/Makassar" in saved_text
+
+
+def test_save_config_endpoint_with_gemini_api_key(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:
+    target_config = tmp_path / "config.yaml"
+    monkeypatch.setattr("magang_log.server.routers.setup.find_repo_root", lambda: tmp_path)
+
+    payload = {
+        "timezone": "Asia/Jakarta",
+        "llm": {
+            "provider": "gemini",
+            "model": "gemini-2.5-flash",
+            "api_key": "AIzaSySecretApiKey123",
+        },
+        "config_path": str(target_config),
+    }
+
+    response = client.post("/api/setup/save", json=payload)
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert target_config.exists()
+
+    env_file = tmp_path / ".env"
+    assert env_file.exists()
+    assert "GEMINI_API_KEY=AIzaSySecretApiKey123" in env_file.read_text(encoding="utf-8")
 
 
 def test_save_config_endpoint_validation_error(

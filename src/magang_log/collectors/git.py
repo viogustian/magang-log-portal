@@ -14,7 +14,9 @@ from .base import Evidence, SourceConfig
 logger = logging.getLogger(__name__)
 
 
-def _run_git_cmd(repo_path: Path, args: Sequence[str]) -> str | None:
+def _run_git_cmd(
+    repo_path: Path, args: Sequence[str], log_warning: bool = True
+) -> str | None:
     """Menjalankan perintah git pada repositori tertentu dengan penanganan exception aman."""
     try:
         res = subprocess.run(
@@ -28,13 +30,14 @@ def _run_git_cmd(repo_path: Path, args: Sequence[str]) -> str | None:
         )
         return res.stdout
     except (subprocess.SubprocessError, OSError) as exc:
-        logger.warning(
-            "Eksekusi git gagal di %s dengan argumen %s: [%s] %s",
-            repo_path,
-            args,
-            exc.__class__.__name__,
-            exc,
-        )
+        if log_warning:
+            logger.warning(
+                "Eksekusi git gagal di %s dengan argumen %s: [%s] %s",
+                repo_path,
+                args,
+                exc.__class__.__name__,
+                exc,
+            )
         return None
 
 
@@ -46,7 +49,7 @@ def _is_git_repo(path: Path) -> bool:
     git_dir = path / ".git"
     if git_dir.exists():
         return True
-    out = _run_git_cmd(path, ["rev-parse", "--is-inside-work-tree"])
+    out = _run_git_cmd(path, ["rev-parse", "--is-inside-work-tree"], log_warning=False)
     return out is not None and "true" in out.lower()
 
 
@@ -118,14 +121,36 @@ class GitCollector:
         since_str = f"{since_date.isoformat()} 00:00:00"
         until_str = f"{until_date.isoformat()} 23:59:59"
 
+        # Resolve and expand repos (including workspace root containing child git repos)
+        expanded_repos: list[Path] = []
         for repo_path in repos:
-            if not _is_git_repo(repo_path):
+            if _is_git_repo(repo_path):
+                expanded_repos.append(repo_path)
+            elif repo_path.is_dir():
+                try:
+                    sub_repos = [
+                        sub for sub in repo_path.iterdir()
+                        if sub.is_dir() and _is_git_repo(sub)
+                    ]
+                    if sub_repos:
+                        expanded_repos.extend(sub_repos)
+                    else:
+                        logger.warning(
+                            "Direktori repositori git tidak valid atau tidak ditemukan: %s, melewati...",
+                            repo_path,
+                        )
+                except OSError:
+                    logger.warning(
+                        "Direktori repositori git tidak valid atau tidak ditemukan: %s, melewati...",
+                        repo_path,
+                    )
+            else:
                 logger.warning(
                     "Direktori repositori git tidak valid atau tidak ditemukan: %s, melewati...",
                     repo_path,
                 )
-                continue
 
+        for repo_path in expanded_repos:
             # Ambil hash commit dalam rentang
             hashes_output = _run_git_cmd(
                 repo_path,

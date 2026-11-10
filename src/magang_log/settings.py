@@ -99,7 +99,7 @@ class ReviewSettings(StrictBaseModel):
 
 class LLMSettings(StrictBaseModel):
     provider: str = "gemini"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"
     temperature: float = 0.2
     max_input_tokens: int = 6000
     daily_token_budget: int = 20000

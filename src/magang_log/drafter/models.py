@@ -21,4 +21,4 @@ class LogEntryDraft(BaseModel):
     evidence_refs: dict[str, list[str]] = Field(default_factory=dict)
     needs_input: list[str] = Field(default_factory=list)
     prompt_version: str = "v1"
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"

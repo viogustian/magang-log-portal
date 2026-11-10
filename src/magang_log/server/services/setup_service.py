@@ -31,7 +31,7 @@ from ...workprofile import WorkProfile, load_presets
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 
 class InstallationGuidance(BaseModel):
@@ -546,7 +546,7 @@ def verify_gemini_connection(
     if not clean_key:
         raise ValueError("API key must not be empty.")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {
         "contents": [{"parts": [{"text": "ping"}]}],
         "generationConfig": {
@@ -557,7 +557,10 @@ def verify_gemini_connection(
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": clean_key,
+        },
         method="POST",
     )
 
@@ -605,7 +608,7 @@ def call_gemini_for_profile(
         "- watch_folders (list of string): directories to scan (default: [])\n"
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     body = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": [{"text": description}]}],
@@ -618,7 +621,10 @@ def call_gemini_for_profile(
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": clean_key,
+        },
         method="POST",
     )
 

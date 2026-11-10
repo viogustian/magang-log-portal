@@ -84,6 +84,8 @@ class GeminiModelClient:
         timeout_seconds: int = 30,
     ) -> None:
         self.api_key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+        if model in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+            model = "gemini-3.5-flash"
         self.model = model
         self.temperature = temperature
         self.timeout_seconds = timeout_seconds
@@ -103,7 +105,7 @@ class GeminiModelClient:
                 "GEMINI_API_KEY tidak ditemukan. Pastikan variabel lingkungan sudah disetel."
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         body = {
             "system_instruction": {"parts": [{"text": system_prompt}]},
             "contents": [{"parts": [{"text": user_payload}]}],
@@ -116,7 +118,10 @@ class GeminiModelClient:
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
             method="POST",
         )
 

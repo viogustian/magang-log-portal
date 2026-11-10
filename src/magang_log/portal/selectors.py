@@ -120,6 +120,11 @@ def history_heading(page: Page) -> Locator:
     return page.get_by_role("heading", name="Riwayat Kehadiran", exact=True)
 
 
+def riwayat_nav_link(page: Page) -> Locator:
+    """Elemen navigasi teks Riwayat pada sidebar/navbar."""
+    return page.get_by_text("Riwayat").first
+
+
 def day_button(page: Page, d: date) -> Locator:
     """Tombol hari menggunakan format nama hari yang dapat diakses (mis. 'Selasa, 27 Oktober 2026, ...')."""
     pattern = re.compile(
