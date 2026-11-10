@@ -1,5 +1,6 @@
 """Integration tests for SetupWizard API endpoints (/api/setup/*)."""
 
+import json
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -531,5 +532,61 @@ def test_register_scheduler_dual_times_and_validation(client: TestClient) -> Non
     }
     res_invalid = client.post("/api/setup/register-scheduler", json=invalid_payload)
     assert res_invalid.status_code in (400, 422)
+
+
+def test_get_gemini_models_fallback_without_key(client: TestClient) -> None:
+    res = client.get("/api/setup/gemini-models")
+    assert res.status_code == 200
+    data = res.json()
+    assert "models" in data
+    assert len(data["models"]) > 0
+    assert any(m["id"] == "gemini-3.5-flash" for m in data["models"])
+    assert data["source"] in ("fallback_offline", "fallback_error", "google_api")
+
+
+def test_get_gemini_models_with_mocked_google_api(client: TestClient) -> None:
+    mock_google_response = {
+        "models": [
+            {
+                "name": "models/gemini-3.5-flash",
+                "displayName": "Gemini 3.5 Flash",
+                "supportedGenerationMethods": ["generateContent"],
+            },
+            {
+                "name": "models/gemini-3.8-flash",
+                "displayName": "Gemini 3.8 Flash",
+                "supportedGenerationMethods": ["generateContent"],
+            },
+            {
+                "name": "models/gemini-2.5-flash",
+                "displayName": "Gemini 2.5 Flash (Deprecated)",
+                "supportedGenerationMethods": ["generateContent"],
+            },
+            {
+                "name": "models/gemini-3.5-flash-tts",
+                "displayName": "Gemini TTS",
+                "supportedGenerationMethods": ["generateContent"],
+            },
+        ]
+    }
+
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(mock_google_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = client.get("/api/setup/gemini-models?api_key=mock-key")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["source"] == "google_api"
+        model_ids = [m["id"] for m in data["models"]]
+        # gemini-3.5-flash and gemini-3.8-flash must be included
+        assert "gemini-3.5-flash" in model_ids
+        assert "gemini-3.8-flash" in model_ids
+        # deprecated models and tts models must be excluded
+        assert "gemini-2.5-flash" not in model_ids
+        assert "gemini-3.5-flash-tts" not in model_ids
+        rec_model = next(m for m in data["models"] if m["id"] == "gemini-3.5-flash")
+        assert rec_model["is_recommended"] is True
 
 

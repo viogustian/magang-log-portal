@@ -537,4 +537,47 @@ public class SettingsFormTests
             Assert.False(result);
         });
     }
+
+    [Fact]
+    public async Task TestSettingsForm_GeminiModelPicker_PopulatesAndSaves()
+    {
+        var cannedJson = """
+        {
+            "models": [
+                {
+                    "id": "gemini-3.8-flash",
+                    "display_name": "Gemini 3.8 Flash",
+                    "description": "Flash model",
+                    "is_recommended": true
+                }
+            ],
+            "recommended_model": "gemini-3.8-flash",
+            "source": "api"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        await RunStaAsync(async () =>
+        {
+            using var form = new SettingsForm(client);
+
+            // Default model
+            Assert.False(string.IsNullOrWhiteSpace(form.SelectedGeminiModel));
+
+            // Set custom model
+            form.SelectedGeminiModel = "gemini-3.8-flash";
+            Assert.Equal("gemini-3.8-flash", form.SelectedGeminiModel);
+
+            // Refresh models from API
+            await form.LoadGeminiModelsAsync();
+            Assert.Equal("gemini-3.8-flash", form.SelectedGeminiModel);
+
+            var req = new SaveConfigRequest();
+            form.ApplyToConfig(req);
+            Assert.NotNull(req.Llm);
+            Assert.Equal("gemini-3.8-flash", req.Llm.Model);
+        });
+    }
 }

@@ -65,3 +65,33 @@ public class OpenLoginResponse
     public bool Authenticated { get; set; }
 }
 
+/// <summary>
+/// Individual model option returned from Google AI Studio.
+/// </summary>
+public class GeminiModelItem
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("display_name")]
+    public string DisplayName { get; set; } = string.Empty;
+
+    [JsonPropertyName("is_recommended")]
+    public bool IsRecommended { get; set; } = false;
+}
+
+/// <summary>
+/// Response model for available live Gemini models.
+/// </summary>
+public class GeminiModelsResponse
+{
+    [JsonPropertyName("models")]
+    public List<GeminiModelItem> Models { get; set; } = new();
+
+    [JsonPropertyName("active_model")]
+    public string ActiveModel { get; set; } = "gemini-3.5-flash";
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
+}
+

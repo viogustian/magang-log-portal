@@ -690,5 +690,42 @@ public class BackendApiClientTests
         Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
         Assert.EndsWith("/api/portal/open-login", handler.SentRequests[0].RequestUri!.AbsolutePath);
     }
+
+    [Fact]
+    public async Task TestGetGeminiModelsAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "models": [
+                {
+                    "id": "gemini-3.5-flash",
+                    "display_name": "Gemini 3.5 Flash",
+                    "is_recommended": true
+                },
+                {
+                    "id": "gemini-3.8-flash",
+                    "display_name": "Gemini 3.8 Flash",
+                    "is_recommended": false
+                }
+            ],
+            "active_model": "gemini-3.5-flash",
+            "source": "api"
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.GetGeminiModelsAsync("AIzaSyDummyKey");
+
+        Assert.NotNull(response);
+        Assert.Equal("gemini-3.5-flash", response.ActiveModel);
+        Assert.Equal("api", response.Source);
+        Assert.Equal(2, response.Models.Count);
+        Assert.True(response.Models[0].IsRecommended);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Get, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/setup/gemini-models", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

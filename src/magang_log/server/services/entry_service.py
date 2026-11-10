@@ -288,15 +288,46 @@ def regenerate_draft(
         result = stage.draft_and_validate(target_date=d, evidence=evidence_items, notes=notes)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "Primary AI drafter failed (%s), using deterministic fallback draft.",
+            "Primary AI drafter failed (%s), attempting dynamic model recovery...",
             exc,
         )
-        fallback_stage = DraftingStage(
-            drafter=EvidenceDrafter(model_client=FakeModelClient(response=default_draft))
-        )
-        result = fallback_stage.draft_and_validate(
-            target_date=d, evidence=evidence_items, notes=notes
-        )
+        recovered = False
+        exc_str = str(exc)
+        if key and any(m in exc_str for m in ("is no longer available", "404", "NOT_FOUND")):
+            try:
+                from .setup_service import fetch_available_gemini_models, save_app_configuration
+
+                models_info = fetch_available_gemini_models(api_key=key)
+                for candidate in models_info.get("models", []):
+                    c_id = candidate["id"]
+                    if c_id != model_name:
+                        logger.info("Attempting auto-heal draft with active Gemini model: %s", c_id)
+                        try:
+                            retry_client = GeminiModelClient(api_key=key, model=c_id)
+                            retry_stage = DraftingStage(drafter=EvidenceDrafter(model_client=retry_client))
+                            result = retry_stage.draft_and_validate(
+                                target_date=d, evidence=evidence_items, notes=notes
+                            )
+                            recovered = True
+                            try:
+                                cfg.llm.model = c_id
+                                save_app_configuration(cfg)
+                                logger.info("Auto-upgraded active config.yaml model to: %s", c_id)
+                            except Exception as save_err:  # noqa: BLE001
+                                logger.warning("Could not persist auto-upgraded model: %s", save_err)
+                            break
+                        except Exception as retry_err:  # noqa: BLE001
+                            logger.warning("Recovery candidate %s failed: %s", c_id, retry_err)
+            except Exception as autoheal_err:  # noqa: BLE001
+                logger.warning("Dynamic model auto-heal failed: %s", autoheal_err)
+
+        if not recovered:
+            fallback_stage = DraftingStage(
+                drafter=EvidenceDrafter(model_client=FakeModelClient(response=default_draft))
+            )
+            result = fallback_stage.draft_and_validate(
+                target_date=d, evidence=evidence_items, notes=notes
+            )
 
     draft_json = result.draft.model_dump_json(indent=2)
     combined = (

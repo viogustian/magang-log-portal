@@ -585,6 +585,34 @@ public class BackendApiClient
     }
 
     /// <summary>
+    /// Fetches live available Gemini Flash models from Google AI Studio via GET /api/setup/gemini-models.
+    /// </summary>
+    public virtual async Task<GeminiModelsResponse?> GetGeminiModelsAsync(
+        string? apiKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var url = string.IsNullOrWhiteSpace(apiKey)
+                ? $"{_baseUrl}/api/setup/gemini-models"
+                : $"{_baseUrl}/api/setup/gemini-models?api_key={Uri.EscapeDataString(apiKey)}";
+
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonSerializer.Deserialize<GeminiModelsResponse>(json, JsonOptions);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Checks current MagangHub portal authentication session status via GET /api/portal/auth-status.
     /// </summary>
     public virtual async Task<PortalAuthStatusResponse?> GetPortalAuthStatusAsync(

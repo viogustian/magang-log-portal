@@ -43,6 +43,7 @@ from ..services.setup_service import (
     unregister_task_scheduler,
     validate_folder_paths,
     verify_gemini_connection,
+    fetch_available_gemini_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,22 @@ class TestGeminiResponse(BaseModel):
 
     valid: bool
     model: str
+
+
+class GeminiModelItem(BaseModel):
+    """Available Gemini model item description."""
+
+    id: str
+    display_name: str
+    is_recommended: bool = False
+
+
+class GeminiModelsResponse(BaseModel):
+    """Response payload for available live Gemini models."""
+
+    models: list[GeminiModelItem]
+    active_model: str
+    source: str
 
 
 class PredictProfileRequest(BaseModel):
@@ -236,6 +253,18 @@ def test_gemini(req: TestGeminiRequest) -> dict[str, Any]:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=msg,
         ) from exc
+
+
+@router.get(
+    "/gemini-models",
+    response_model=GeminiModelsResponse,
+    summary="Fetch live available Gemini Flash models from Google AI Studio",
+)
+def get_gemini_models(
+    api_key: str | None = Query(default=None, description="Optional Google AI Studio API key"),
+) -> dict[str, Any]:
+    """Retrieve available active Gemini flash models for logbook drafting."""
+    return fetch_available_gemini_models(api_key=api_key)
 
 
 @router.get(

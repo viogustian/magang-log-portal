@@ -536,6 +536,93 @@ def find_closest_preset(
     return best_preset
 
 
+FALLBACK_FLASH_MODELS: list[dict[str, Any]] = [
+    {"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash", "is_recommended": True},
+    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash", "is_recommended": False},
+    {"id": "gemini-flash-latest", "display_name": "Gemini Flash Latest", "is_recommended": False},
+    {"id": "gemini-3.7-flash", "display_name": "Gemini 3.7 Flash", "is_recommended": False},
+]
+
+DEPRECATED_MODELS: set[str] = {
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+}
+
+
+def fetch_available_gemini_models(
+    api_key: str | None = None,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """Fetch live list of generateContent-compatible Flash models from Google AI Studio.
+
+    Filters for active text/json generative flash models and flags the recommended model.
+    Falls back gracefully to FALLBACK_FLASH_MODELS if key is missing or offline.
+    """
+    clean_key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if not clean_key:
+        return {
+            "models": FALLBACK_FLASH_MODELS,
+            "source": "fallback_offline",
+            "active_model": DEFAULT_MODEL,
+        }
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
+    req = urllib.request.Request(
+        url,
+        headers={"x-goog-api-key": clean_key},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw_models = data.get("models", [])
+            items: list[dict[str, Any]] = []
+            for m in raw_models:
+                m_name = m.get("name", "").replace("models/", "")
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" not in methods:
+                    continue
+                if m_name in DEPRECATED_MODELS:
+                    continue
+
+                low_name = m_name.lower()
+                # Prioritize general text/json flash models, ignore specialized tts/image/robotics
+                if "flash" in low_name and not any(
+                    k in low_name for k in ("tts", "image", "transcribe", "robotics")
+                ):
+                    display_name = m.get("displayName", m_name)
+                    is_rec = (m_name == DEFAULT_MODEL)
+                    items.append({
+                        "id": m_name,
+                        "display_name": display_name,
+                        "is_recommended": is_rec,
+                    })
+
+            if not items:
+                items = list(FALLBACK_FLASH_MODELS)
+            else:
+                has_rec = any(it["is_recommended"] for it in items)
+                if not has_rec and items:
+                    items[0]["is_recommended"] = True
+
+            return {
+                "models": items,
+                "source": "google_api",
+                "active_model": DEFAULT_MODEL,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to fetch live Gemini models from Google AI Studio: %s", exc)
+        return {
+            "models": FALLBACK_FLASH_MODELS,
+            "source": "fallback_error",
+            "active_model": DEFAULT_MODEL,
+        }
+
+
 def verify_gemini_connection(
     api_key: str,
     model: str = DEFAULT_MODEL,

@@ -82,6 +82,8 @@ public class SettingsForm : Form
     private readonly CheckBox _chkShowApiKey;
     private readonly Button _btnTestGemini;
     private readonly Label _lblGeminiStatus;
+    private readonly ComboBox _cboGeminiModel;
+    private readonly Button _btnRefreshGeminiModels;
     private readonly Label _lblPortalStatus;
     private readonly Button _btnRefreshPortalStatus;
     private readonly Button _btnOpenPortalLogin;
@@ -290,6 +292,20 @@ public class SettingsForm : Form
     public string GeminiStatusText => _lblGeminiStatus.Text;
     public bool IsGeminiValid { get; private set; } = false;
     public string PortalStatusText => _lblPortalStatus.Text;
+    public ComboBox GeminiModelComboBox => _cboGeminiModel;
+    public string SelectedGeminiModel
+    {
+        get => _cboGeminiModel.SelectedItem?.ToString() ?? "gemini-3.5-flash";
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            if (!_cboGeminiModel.Items.Contains(value))
+            {
+                _cboGeminiModel.Items.Add(value);
+            }
+            _cboGeminiModel.SelectedItem = value;
+        }
+    }
 
     public SettingsForm(BackendApiClient? apiClient = null)
     {
@@ -332,7 +348,8 @@ public class SettingsForm : Form
             out _lblSchedulerStatus, out _btnRegisterScheduler, out _btnUnregisterScheduler,
             out _chkNotifyToast, out _cboReminderLeadTime, out _chkNotifyOnSuccess);
         var tab6 = BuildTab6CredentialsAndPortal(out _txtGeminiApiKey, out _chkShowApiKey, out _btnTestGemini,
-            out _lblGeminiStatus, out _lblPortalStatus, out _btnRefreshPortalStatus, out _btnOpenPortalLogin);
+            out _lblGeminiStatus, out _cboGeminiModel, out _btnRefreshGeminiModels,
+            out _lblPortalStatus, out _btnRefreshPortalStatus, out _btnOpenPortalLogin);
         var tab7 = BuildTab7Requirements(out _requirementPanel);
 
         TabControl.TabPages.Add(tab1);
@@ -372,8 +389,9 @@ public class SettingsForm : Form
             var schedulerTask = RefreshSchedulerStatusAsync();
             var portalTask = RefreshPortalAuthStatusAsync();
             var reqTask = _requirementPanel.LoadRequirementsAsync();
+            var modelsTask = LoadGeminiModelsAsync();
 
-            await Task.WhenAll(presetsTask, configTask, schedulerTask, portalTask, reqTask);
+            await Task.WhenAll(presetsTask, configTask, schedulerTask, portalTask, reqTask, modelsTask);
 
             var presets = await presetsTask;
             if (presets != null && presets.Count > 0)
@@ -491,9 +509,16 @@ public class SettingsForm : Form
         NotifyOnSuccess = config.Notify?.NotifyOnSuccess ?? false;
 
         // Tab 6: AI Credentials
-        if (config.Llm != null && !string.IsNullOrWhiteSpace(config.Llm.ApiKey))
+        if (config.Llm != null)
         {
-            GeminiApiKey = config.Llm.ApiKey;
+            if (!string.IsNullOrWhiteSpace(config.Llm.ApiKey))
+            {
+                GeminiApiKey = config.Llm.ApiKey;
+            }
+            if (!string.IsNullOrWhiteSpace(config.Llm.Model))
+            {
+                SelectedGeminiModel = config.Llm.Model;
+            }
         }
     }
 
@@ -548,6 +573,7 @@ public class SettingsForm : Form
         // Tab 6: LLM Credentials
         target.Llm ??= new LlmSettingsDto();
         target.Llm.ApiKey = GeminiApiKey;
+        target.Llm.Model = SelectedGeminiModel;
     }
 
     /// <summary>
@@ -903,6 +929,7 @@ public class SettingsForm : Form
                 IsGeminiValid = true;
                 _lblGeminiStatus.Text = $"🟢 API Key Valid (Model: {res.Model})";
                 _lblGeminiStatus.ForeColor = Color.FromArgb(22, 101, 52);
+                await LoadGeminiModelsAsync(key);
             }
             else
             {
@@ -920,6 +947,46 @@ public class SettingsForm : Form
         finally
         {
             _btnTestGemini.Enabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Fetches live available Gemini Flash models from Google AI Studio and updates dropdown.
+    /// </summary>
+    public async Task LoadGeminiModelsAsync(string? key = null)
+    {
+        var effectiveKey = string.IsNullOrWhiteSpace(key) ? GeminiApiKey : key;
+        try
+        {
+            _btnRefreshGeminiModels.Enabled = false;
+            var response = await _apiClient.GetGeminiModelsAsync(effectiveKey);
+            if (response != null && response.Models != null && response.Models.Count > 0)
+            {
+                var currentSelection = SelectedGeminiModel;
+                _cboGeminiModel.Items.Clear();
+                foreach (var m in response.Models)
+                {
+                    _cboGeminiModel.Items.Add(m.Id);
+                }
+
+                if (!string.IsNullOrEmpty(currentSelection) && _cboGeminiModel.Items.Contains(currentSelection))
+                {
+                    _cboGeminiModel.SelectedItem = currentSelection;
+                }
+                else
+                {
+                    var rec = response.Models.FirstOrDefault(m => m.IsRecommended) ?? response.Models[0];
+                    _cboGeminiModel.SelectedItem = rec.Id;
+                }
+            }
+        }
+        catch
+        {
+            // Graceful: keep default options
+        }
+        finally
+        {
+            _btnRefreshGeminiModels.Enabled = true;
         }
     }
 
@@ -2026,6 +2093,8 @@ public class SettingsForm : Form
         out CheckBox chkShow,
         out Button btnTest,
         out Label lblGeminiStatus,
+        out ComboBox cboGeminiModel,
+        out Button btnRefreshModels,
         out Label lblPortalStatus,
         out Button btnRefreshPortal,
         out Button btnOpenLogin)
@@ -2042,7 +2111,7 @@ public class SettingsForm : Form
         {
             Text = "Kredensial Google AI Studio (Gemini)",
             Dock = DockStyle.Top,
-            Height = 160,
+            Height = 225,
             Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
             ForeColor = Color.FromArgb(30, 41, 59),
             Padding = new Padding(12)
@@ -2076,10 +2145,48 @@ public class SettingsForm : Form
         var localChkShow = chkShow;
         localChkShow.CheckedChanged += (_, _) => localTxtApiKey.UseSystemPasswordChar = !localChkShow.Checked;
 
+        var lblModel = new Label
+        {
+            Text = "Model Gemini Terpilih (Free Tier):",
+            Location = new Point(14, 82),
+            Size = new Size(250, 18),
+            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular)
+        };
+
+        cboGeminiModel = new ComboBox
+        {
+            Location = new Point(16, 102),
+            Size = new Size(350, 26),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Font = new Font("Segoe UI", 9f, FontStyle.Regular)
+        };
+        cboGeminiModel.Items.AddRange(new object[]
+        {
+            "gemini-3.5-flash",
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-3.7-flash"
+        });
+        cboGeminiModel.SelectedItem = "gemini-3.5-flash";
+
+        btnRefreshModels = new Button
+        {
+            Text = "🔄 Perbarui Model",
+            Location = new Point(376, 100),
+            Size = new Size(160, 28),
+            BackColor = Color.FromArgb(241, 245, 249),
+            ForeColor = Color.FromArgb(30, 41, 59),
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
+            Cursor = Cursors.Hand
+        };
+        btnRefreshModels.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
+        btnRefreshModels.Click += async (_, _) => await LoadGeminiModelsAsync(localTxtApiKey.Text);
+
         btnTest = new Button
         {
             Text = "⚡ Tes Koneksi Gemini",
-            Location = new Point(16, 84),
+            Location = new Point(16, 142),
             Size = new Size(170, 32),
             BackColor = Color.FromArgb(37, 99, 235),
             ForeColor = Color.White,
@@ -2093,7 +2200,7 @@ public class SettingsForm : Form
         lblGeminiStatus = new Label
         {
             Text = "Status: Belum diuji",
-            Location = new Point(195, 91),
+            Location = new Point(195, 149),
             Size = new Size(480, 22),
             Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
             ForeColor = Color.FromArgb(100, 116, 139)
@@ -2101,8 +2208,8 @@ public class SettingsForm : Form
 
         var lblKeyNote = new Label
         {
-            Text = "ℹ️ Kunci API disimpan lokal dan digunakan untuk penyusunan draf harian via gemini-2.5-flash.",
-            Location = new Point(16, 125),
+            Text = "ℹ️ Kunci API disimpan lokal dan model dipilih otomatis dari daftar aktif Google AI Studio.",
+            Location = new Point(16, 186),
             Size = new Size(650, 20),
             Font = new Font(Font.FontFamily, 8f, FontStyle.Italic),
             ForeColor = Color.FromArgb(100, 116, 139)
@@ -2111,6 +2218,9 @@ public class SettingsForm : Form
         grpGemini.Controls.Add(lblKey);
         grpGemini.Controls.Add(txtApiKey);
         grpGemini.Controls.Add(chkShow);
+        grpGemini.Controls.Add(lblModel);
+        grpGemini.Controls.Add(cboGeminiModel);
+        grpGemini.Controls.Add(btnRefreshModels);
         grpGemini.Controls.Add(btnTest);
         grpGemini.Controls.Add(lblGeminiStatus);
         grpGemini.Controls.Add(lblKeyNote);
