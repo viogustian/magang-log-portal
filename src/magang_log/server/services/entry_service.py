@@ -374,6 +374,7 @@ def approve_and_submit_entry(
     store: LedgerStore | None = None,
     config: AppConfig | None = None,
     coordinator: Any | None = None,
+    portal: Any | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Approve active validated draft and coordinate submission to portal."""
@@ -406,7 +407,7 @@ def approve_and_submit_entry(
         kendala=draft_data.get("kendala", ""),
         evidence_refs=draft_data.get("evidence_refs", {}),
         prompt_version=entry.prompt_version or "v1",
-        model=entry.model or "gemini-2.5-flash",
+        model=entry.model or "gemini-3.5-flash",
     )
 
     validator = MultiStageValidator()
@@ -445,35 +446,84 @@ def approve_and_submit_entry(
     )
 
     # Portal submission
-    if coordinator is not None and getattr(coordinator, "portal", None) is not None:
-        portal_res = coordinator.portal.submit(approved, dry_run=dry_run)
-        if portal_res.status == Status.BERHASIL:
-            st.mark_submitted(d, portal_status=Status.BERHASIL)
-            st.mark_verified(d, portal_status=Status.SUDAH_TERKIRIM)
-            return {
-                "success": True,
-                "final_status": "BERHASIL",
-                "error_message": None,
-            }
-        else:
-            err_msg = portal_res.note or "Portal submission failed"
-            status_val = (
-                portal_res.status.value
-                if hasattr(portal_res.status, "value")
-                else str(portal_res.status)
+    portal_instance = portal
+    if portal_instance is None and coordinator is not None and getattr(coordinator, "portal", None) is not None:
+        portal_instance = coordinator.portal
+
+    if portal_instance is None:
+        try:
+            from ...portal import PlaywrightPortal, PortalConfig
+            from ...settings import load_config
+
+            cfg = config or load_config()
+            portal_cfg = PortalConfig(
+                base_url=cfg.portal.base_url,
+                auth_state=cfg.portal.auth_state,
+                artifacts_dir=cfg.portal.artifacts_dir,
+                headless=cfg.portal.headless,
+                channel=cfg.portal.channel,
+                timeout_ms=cfg.portal.timeout_ms,
+                location_timeout_ms=cfg.portal.location_timeout_ms,
+                allow_location=cfg.portal.allow_location,
+                min_chars=cfg.rules.min_chars,
+                max_chars=cfg.rules.max_chars,
             )
-            st.update_entry_submission(d, portal_status=status_val)
+            portal_instance = PlaywrightPortal(portal_cfg)
+        except Exception as portal_init_err:
+            logger.error("Failed to initialize PlaywrightPortal: %s", portal_init_err)
             return {
                 "success": False,
-                "final_status": status_val,
-                "error_message": err_msg,
+                "final_status": "GAGAL",
+                "error_message": f"Inisialisasi Playwright gagal: {portal_init_err}",
             }
 
-    # Default direct success when no coordinator portal configured
-    st.mark_submitted(d, portal_status=Status.BERHASIL)
-    st.mark_verified(d, portal_status=Status.SUDAH_TERKIRIM)
-    return {
-        "success": True,
-        "final_status": "BERHASIL",
-        "error_message": None,
-    }
+    try:
+        portal_res = portal_instance.submit(approved, dry_run=dry_run)
+    except Exception as exc:
+        logger.error("Playwright portal submit error: %s", exc)
+        st.update_entry_submission(d, portal_status="GAGAL")
+        return {
+            "success": False,
+            "final_status": "GAGAL",
+            "error_message": f"Pengiriman portal gagal: {exc}",
+        }
+
+    if portal_res.status in (Status.BERHASIL, Status.SUDAH_TERKIRIM):
+        st.mark_submitted(d, portal_status=Status.BERHASIL)
+        st.mark_verified(d, portal_status=Status.SUDAH_TERKIRIM)
+        return {
+            "success": True,
+            "final_status": "BERHASIL",
+            "error_message": None,
+        }
+    elif portal_res.status == Status.DRYRUN:
+        st.mark_submitted(d, portal_status=Status.DRYRUN)
+        return {
+            "success": True,
+            "final_status": "DRYRUN",
+            "error_message": portal_res.note,
+        }
+    elif portal_res.status == Status.LOGIN_DIPERLUKAN:
+        err_msg = (
+            f"Sesi portal Monev Kemnaker telah kedaluwarsa atau belum login ({portal_res.note}). "
+            "Silakan buka menu Pengaturan -> Kredensial & Portal -> Buka Browser Login Portal."
+        )
+        st.update_entry_submission(d, portal_status="LOGIN_DIPERLUKAN")
+        return {
+            "success": False,
+            "final_status": "LOGIN_DIPERLUKAN",
+            "error_message": err_msg,
+        }
+    else:
+        err_msg = portal_res.note or "Pengiriman logbook ke portal tidak berhasil."
+        status_val = (
+            portal_res.status.value
+            if hasattr(portal_res.status, "value")
+            else str(portal_res.status)
+        )
+        st.update_entry_submission(d, portal_status=status_val)
+        return {
+            "success": False,
+            "final_status": status_val,
+            "error_message": err_msg,
+        }
