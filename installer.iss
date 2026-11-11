@@ -53,8 +53,10 @@ Name: "startupicon"; Description: "Jalankan otomatis saat Windows startup (Opsio
 ; 1. Biner Aplikasi Desktop .NET 8 (Self-Contained WinForms)
 Source: "publish\desktop-bundle\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; 2. Modul Backend Python, Prompt, Skrip & Konfigurasi Bawaan (tanpa kredensial/config lokal)
-Source: "src\*"; DestDir: "{app}\src"; Excludes: "__pycache__,*.pyc,*.pyo"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 2. Biner Backend Python Mandiri (PyInstaller: FastAPI, Uvicorn, Playwright, CLI)
+Source: "publish\backend-dist\magang-log\*"; DestDir: "{app}\backend"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; 3. Prompt, Skrip Penjadwalan & Konfigurasi Bawaan (tanpa kredensial/config lokal)
 Source: "prompts\*"; DestDir: "{app}\prompts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "examples\*"; DestDir: "{app}\examples"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -65,7 +67,8 @@ Source: "pyproject.toml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-; Direktori data lokal & log audit (Diberikan izin write untuk pengguna saat ini)
+; Direktori konfigurasi, data lokal & log audit (Diberikan izin write untuk pengguna saat ini)
+Name: "{app}\config"; Permissions: users-modify
 Name: "{app}\data"; Permissions: users-modify
 Name: "{app}\data\auth"; Permissions: users-modify
 Name: "{app}\logs"; Permissions: users-modify

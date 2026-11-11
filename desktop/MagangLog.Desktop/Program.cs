@@ -8,6 +8,7 @@ namespace MagangLog.Desktop;
 
 internal static class Program
 {
+    private const string HealthEndpoint = "http://127.0.0.1:8765/api/health";
     private static Process? _backendProcess;
 
     /// <summary>
@@ -28,82 +29,124 @@ internal static class Program
         }
     }
 
-    private static void TryStartBackendServer()
+    private static bool IsBackendHealthy()
     {
         try
         {
-            // Cek apakah server lokal di port 8765 sudah aktif
             using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
-            var res = client.GetAsync("http://127.0.0.1:8765/api/setup/requirements").GetAwaiter().GetResult();
-            if (res.IsSuccessStatusCode)
-            {
-                return; // Server sudah aktif
-            }
+            var res = client.GetAsync(HealthEndpoint).GetAwaiter().GetResult();
+            return res.IsSuccessStatusCode;
         }
         catch
         {
-            // Server belum aktif, lanjutkan ke inisialisasi background runner
+            return false;
+        }
+    }
+
+    private static string ResolveWorkDirectory(string baseDir)
+    {
+        if (File.Exists(Path.Combine(baseDir, "pyproject.toml")))
+        {
+            return baseDir;
+        }
+
+        var parent = Directory.GetParent(baseDir)?.FullName;
+        if (parent != null && File.Exists(Path.Combine(parent, "pyproject.toml")))
+        {
+            return parent;
+        }
+
+        var rootDir = Directory.GetParent(parent ?? "")?.FullName;
+        if (rootDir != null && File.Exists(Path.Combine(rootDir, "pyproject.toml")))
+        {
+            return rootDir;
+        }
+
+        return baseDir;
+    }
+
+    private static (string FileName, string Arguments)? ResolveBackendCommand(string baseDir, string workDir)
+    {
+        var bundledCandidates = new[]
+        {
+            Path.Combine(baseDir, "backend", "magang-log.exe"),
+            Path.Combine(baseDir, "magang-log.exe")
+        };
+
+        foreach (var candidate in bundledCandidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return (candidate, "ui --host 127.0.0.1 --port 8765 --server-only");
+            }
+        }
+
+        var pythonCandidates = new[]
+        {
+            Path.Combine(workDir, ".venv", "Scripts", "python.exe"),
+            Path.Combine(baseDir, ".venv", "Scripts", "python.exe"),
+            Path.Combine(baseDir, "..", ".venv", "Scripts", "python.exe"),
+            Path.Combine(baseDir, "..", "..", ".venv", "Scripts", "python.exe"),
+            Path.Combine(baseDir, "venv", "Scripts", "python.exe"),
+            "python"
+        };
+
+        foreach (var cand in pythonCandidates)
+        {
+            if (cand == "python" || File.Exists(cand))
+            {
+                return (cand, "-m uvicorn magang_log.server.app:create_app --factory --host 127.0.0.1 --port 8765");
+            }
+        }
+
+        return null;
+    }
+
+    private static void TryStartBackendServer()
+    {
+        if (IsBackendHealthy())
+        {
+            return;
         }
 
         try
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string? pythonExe = null;
-            var candidates = new[]
+            var workDir = ResolveWorkDirectory(baseDir);
+            var command = ResolveBackendCommand(baseDir, workDir);
+            if (command == null)
             {
-                Path.Combine(baseDir, ".venv", "Scripts", "python.exe"),
-                Path.Combine(baseDir, "..", ".venv", "Scripts", "python.exe"),
-                Path.Combine(baseDir, "..", "..", ".venv", "Scripts", "python.exe"),
-                Path.Combine(baseDir, "venv", "Scripts", "python.exe"),
-                "python"
-            };
-
-            foreach (var cand in candidates)
-            {
-                if (cand == "python" || File.Exists(cand))
-                {
-                    pythonExe = cand;
-                    break;
-                }
+                return;
             }
 
-            if (pythonExe != null)
+            var psi = new ProcessStartInfo
             {
-                // Tentukan working directory proyek yang memuat pyproject.toml / src
-                var workDir = baseDir;
-                if (!File.Exists(Path.Combine(workDir, "pyproject.toml")))
-                {
-                    var parent = Directory.GetParent(baseDir)?.FullName;
-                    if (parent != null && File.Exists(Path.Combine(parent, "pyproject.toml")))
-                    {
-                        workDir = parent;
-                    }
-                    else
-                    {
-                        var rootDir = Directory.GetParent(parent ?? "")?.FullName;
-                        if (rootDir != null && File.Exists(Path.Combine(rootDir, "pyproject.toml")))
-                        {
-                            workDir = rootDir;
-                        }
-                    }
-                }
+                FileName = command.Value.FileName,
+                Arguments = command.Value.Arguments,
+                WorkingDirectory = workDir,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            _backendProcess = Process.Start(psi);
 
-                var psi = new ProcessStartInfo
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (_backendProcess == null || _backendProcess.HasExited)
                 {
-                    FileName = pythonExe,
-                    Arguments = "-m uvicorn magang_log.server.app:create_app --factory --host 127.0.0.1 --port 8765",
-                    WorkingDirectory = workDir,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-                _backendProcess = Process.Start(psi);
-                Thread.Sleep(800); // Beri jeda sejenak untuk bind socket server
+                    break;
+                }
+                if (IsBackendHealthy())
+                {
+                    break;
+                }
+                Thread.Sleep(150);
             }
         }
         catch
         {
-            // Jika Python belum terpasang atau gagal spawn, biarkan form menampilkan status offline
+            // Jika backend gagal dijalankan, biarkan form menampilkan status offline
         }
     }
 

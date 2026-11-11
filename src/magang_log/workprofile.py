@@ -9,6 +9,8 @@ from typing import Any, Sequence
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ._paths import find_app_root
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,7 +113,11 @@ class WorkProfile(StrictBaseModel):
 
 
 def _resolve_presets_path(path: Path | str | None) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = find_app_root(
+        markers=("pyproject.toml",),
+        frozen_markers=("pyproject.toml", "config"),
+        source_fallback=Path(__file__).resolve().parents[2],
+    )
     if path is not None:
         p = Path(path)
         if not p.is_absolute():

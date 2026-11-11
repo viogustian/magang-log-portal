@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .._paths import find_app_root
+
 
 def find_project_root(start: Path | None = None) -> Path:
     """Mencari direktori root repositori berdasarkan file penanda pyproject.toml."""
-    cur = (start or Path.cwd()).resolve()
-    for parent in [cur, *cur.parents]:
-        if (parent / "pyproject.toml").exists() or (parent / "prompts").exists():
-            return parent
-    return cur
+    return find_app_root(
+        start,
+        markers=("pyproject.toml", "prompts"),
+        frozen_markers=("pyproject.toml", "prompts"),
+    )
 
 
 def load_prompt_template(version: str = "v1", prompts_dir: Path | None = None) -> str:

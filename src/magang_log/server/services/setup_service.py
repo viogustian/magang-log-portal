@@ -197,6 +197,13 @@ def get_installed_version(name: str) -> str | None:
             return importlib.metadata.version("playwright")
         except (importlib.metadata.PackageNotFoundError, ValueError):
             pass
+        try:
+            from playwright._repo_version import version as pw_version
+
+            if pw_version:
+                return str(pw_version)
+        except ImportError:
+            pass
         playwright_bin = shutil.which("playwright")
         if playwright_bin:
             try:

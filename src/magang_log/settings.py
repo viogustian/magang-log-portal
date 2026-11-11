@@ -12,6 +12,7 @@ from typing import Sequence
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ._paths import find_app_root
 from .workprofile import WorkProfile
 
 logger = logging.getLogger(__name__)
@@ -198,11 +199,11 @@ class AppConfig(StrictBaseModel):
 
 def find_repo_root(start: Path | None = None) -> Path:
     """Mencari direktori root repositori berdasarkan penanda pyproject.toml atau .git."""
-    cur = (start or Path.cwd()).resolve()
-    for parent in [cur, *cur.parents]:
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            return parent
-    return cur
+    return find_app_root(
+        start,
+        markers=("pyproject.toml", ".git"),
+        frozen_markers=("pyproject.toml", "config"),
+    )
 
 
 def load_dotenv(env_path: Path | None = None) -> None:

@@ -1,6 +1,6 @@
 # MagangLog Portal (v2.0)
 
-Aplikasi desktop Windows dan otomasi CLI untuk membantu menyusun, meninjau, dan mengisi laporan harian logbook di portal **MagangHub Monev** secara rapi, aman, dan terverifikasi.
+Aplikasi desktop Windows (*standalone installer*) dan otomasi CLI untuk membantu menyusun, meninjau, dan mengisi laporan harian logbook di portal **MagangHub Monev** secara rapi, aman, dan terverifikasi.
 
 MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git commit, catatan harian, aktivitas aplikasi, dan riwayat browser yang disaring), **AI Drafter (Google Gemini)** dengan sanitasi privasi ketat, **Dashboard Desktop (.NET 8 WinForms)**, serta **otomasi browser Playwright** untuk pengisian form portal tanpa pernah memalsukan lokasi atau mengirim laporan tanpa persetujuan.
 
@@ -8,7 +8,8 @@ MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git co
 
 ## Fitur Utama
 
-- **Setup Wizard 6 Langkah:** Panduan instalasi awal terpadu untuk cek prasyarat sistem, tes koneksi Gemini API Key, pilih folder proyek Git, atur profil kerja, privasi, hingga penjadwalan otomatis.
+- **1x Instal Langsung Jalan:** Installer `.exe` sudah membundle runtime **Desktop (.NET 8)** maupun **Backend (Python + FastAPI + Playwright)** secara mandiri — pengguna umum tidak perlu menginstal Python, .NET SDK, atau mengaktifkan virtual environment.
+- **Setup Wizard 6 Langkah:** Panduan instalasi awal terpadu untuk cek prasyarat, tes koneksi Gemini API Key, pilih folder proyek Git, atur profil kerja, privasi, hingga penjadwalan otomatis.
 - **Dashboard Lokal Desktop:** Tampilan kalender bulanan, feed bukti aktivitas harian, editor draf *inline* (validasi minimal 100 & maksimal 5.000 karakter), catatan refleksi cepat, dan pengaturan lengkap.
 - **Pengumpul Bukti & Sanitasi Privasi:** Mengumpulkan bukti dari Git commit, catatan manual, aplikasi aktif, dan domain browser yang diizinkan — seluruh path sensitif, username, dan rahasia/token disaring secara deterministik sebelum dikirim ke LLM.
 - **Portal Automation Anti-Tamper:** Login manual sekali untuk OTP/CAPTCHA, verifikasi status hari di kalender (hari libur nasional, terkunci, atau sudah terkirim tidak disentuh), cek lokasi perangkat, serta verifikasi ulang dari server setelah submit.
@@ -16,64 +17,33 @@ MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git co
 
 ---
 
-## Prasyarat Sistem
+## Cara 1: Instalasi Pengguna Umum (1x Klik via Installer `.exe`)
 
-Sebelum memulai, pastikan komputer Windows Anda sudah memenuhi kebutuhan berikut:
+### Kebutuhan Minimum di Laptop Pengguna
+1. **Windows 10 / Windows 11 (64-bit).**
+2. **Google Chrome** sudah terpasang (digunakan untuk membuka & mengisi portal MagangHub).
+3. **Gemini API Key** gratis dari [Google AI Studio](https://aistudio.google.com/apikey).
+4. **Git for Windows** *(opsional — hanya diperlukan jika Anda ingin mengambil bukti aktivitas otomatis dari riwayat commit Git proyek Anda)*.
 
-1. **Sistem Operasi:** Windows 10 atau Windows 11 (64-bit).
-2. **Python 3.12 atau lebih baru:** Unduh dari [python.org](https://www.python.org/downloads/windows/).
-   > **Penting:** Saat menginstal Python, pastikan Anda mencentang opsi **"Add python.exe to PATH"**.
-3. **Google Chrome:** Terpasang di Windows (digunakan oleh Playwright untuk login & isi portal MagangHub).
-4. **Git for Windows:** Unduh dari [git-scm.com](https://git-scm.com/download/win) *(disarankan jika ingin mengambil bukti aktivitas dari commit Git)*.
-5. **Gemini API Key:** Kunci API gratis dari [Google AI Studio](https://aistudio.google.com/apikey).
-6. **.NET 8 SDK *(Khusus Developer)*:** Hanya dibutuhkan jika Anda menjalankan atau mem-build aplikasi dari source code. Pengguna installer `.exe` **tidak perlu** menginstal .NET 8 secara terpisah.
+> **Catatan:** Anda **tidak perlu** menginstal Python, **tidak perlu** menginstal .NET SDK, dan **tidak perlu** mengetik perintah terminal apa pun.
 
----
-
-## Cara 1: Instalasi Mudah (Untuk Pengguna Umum via Installer `.exe`)
-
-### Langkah 1 — Unduh & Instal Aplikasi
-1. Buka halaman **[Releases di GitHub](https://github.com/viogustian/magang-log-portal/releases)**.
-2. Unduh file **`MagangLogPortal_Setup_v2.0.0.exe`** pada rilis terbaru.
-3. Jalankan installer tersebut dan ikuti petunjuk hingga selesai *(tidak memerlukan hak Administrator)*.
-   - Lokasi instalasi default: `%LOCALAPPDATA%\Programs\MagangLog Portal`
-
-### Langkah 2 — Siapkan Environment Python (Cukup Sekali)
-Agar aplikasi desktop dapat menjalankan mesin backend & Playwright di latar belakang, buka **PowerShell** lalu jalankan perintah berikut:
-
-```powershell
-# 1. Masuk ke folder instalasi MagangLog Portal
-cd "$env:LOCALAPPDATA\Programs\MagangLog Portal"
-
-# 2. Buat virtual environment (.venv) dan aktifkan
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# 3. Pasang paket backend Python & browser Playwright
-pip install -e .
-playwright install chromium
-```
-
-> **Catatan PowerShell:** Jika muncul pesan error *"execution of scripts is disabled on this system"* saat menjalankan `Activate.ps1`, jalankan perintah berikut sekali saja lalu ulangi langkah aktivasi:
-> ```powershell
-> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
-
-### Langkah 3 — Jalankan Aplikasi & Setup Wizard
-1. Buka **MagangLog Portal** dari Start Menu atau ikon Desktop.
-2. Saat pertama kali dibuka, **Setup Wizard (6 Langkah)** akan muncul otomatis:
-   - **Langkah 1 (Kebutuhan Sistem & Gemini API):** Pastikan status kebutuhan sistem berwarna hijau/OK, lalu masukkan **Gemini API Key** Anda dan tekan tombol tes koneksi.
-   - **Langkah 2 (Folder Proyek):** Tambahkan folder proyek/repositori Git tempat Anda bekerja.
-   - **Langkah 3 (Profil Kerja & Kata Kunci):** Pilih peran magang Anda (atau gunakan preset bawaan) agar draf laporan sesuai bidang kerja.
+### Langkah Pemasangan & Pemakaian
+1. Buka halaman **[Releases Terbaru di GitHub](https://github.com/viogustian/magang-log-portal/releases/latest)** dan unduh file **[`MagangLogPortal_Setup_v2.0.0.exe`](https://github.com/viogustian/magang-log-portal/releases/latest/download/MagangLogPortal_Setup_v2.0.0.exe)**.
+2. Jalankan file installer `.exe` tersebut:
+   - Jika muncul peringatan **Windows Defender SmartScreen** (*"Windows protected your PC"*), klik **More info** → **Run anyway** *(wajar untuk aplikasi open-source tanpa sertifikat tanda tangan berbayar)*.
+   - Klik **Next → Install → Finish** *(bisa diinstal per-user tanpa hak Administrator)*.
+3. Buka aplikasi **MagangLog Portal** dari Start Menu atau ikon Desktop.
+4. Saat pertama kali dibuka, **Setup Wizard (6 Langkah)** akan muncul otomatis:
+   - **Langkah 1 (Sistem & Gemini API):** Pastikan status requirement siap, lalu masukkan **Gemini API Key** Anda dan klik tes koneksi.
+   - **Langkah 2 (Folder Proyek):** Pilih folder proyek/repositori Git tempat Anda bekerja.
+   - **Langkah 3 (Profil Kerja & Kata Kunci):** Pilih bidang/peran magang Anda (atau gunakan preset bawaan seperti *Software Engineer*, dll.).
    - **Langkah 4 (Sumber Bukti & Privasi):** Pilih sumber bukti yang diizinkan (Git, Catatan, Aplikasi, Browser) dan setujui ketentuan privasi.
-   - **Langkah 5 (Mode Pengiriman):** Pilih apakah laporan selalu ditinjau manual sebelum dikirim (*Review*) atau mode lain sesuai kebutuhan.
-   - **Langkah 6 (Ringkasan & Simpan):** Periksa ulang pengaturan lalu klik simpan untuk membuat file `config/config.yaml`.
-
-### Langkah 4 — Login ke Portal MagangHub (Sekali Saja)
-1. Pada Dashboard utama, klik tombol **Login Portal** *(atau melalui terminal dengan `magang-portal login`)*.
-2. Jendela Google Chrome akan terbuka ke halaman MagangHub Monev.
-3. Silakan login seperti biasa termasuk mengisi **OTP / CAPTCHA secara manual**.
-4. Setelah berhasil masuk ke halaman Riwayat Kehadiran, sesi Anda otomatis disimpan secara lokal di `data/auth/state.json` sehingga tidak perlu login berulang kali.
+   - **Langkah 5 (Mode Pengiriman):** Pilih apakah laporan ditinjau manual sebelum dikirim (*Review*) atau mode lain sesuai kebutuhan.
+   - **Langkah 6 (Ringkasan & Simpan):** Periksa ringkasan lalu simpan konfigurasi.
+5. **Login ke Portal MagangHub (Sekali Saja):**
+   - Klik tombol **Login Portal** di Dashboard utama.
+   - Jendela Google Chrome akan terbuka ke MagangHub Monev — silakan login serta isi **OTP / CAPTCHA** seperti biasa.
+   - Setelah berhasil masuk ke halaman Riwayat Kehadiran, sesi Anda tersimpan aman secara lokal di folder `data\auth\state.json`.
 
 ---
 
@@ -81,7 +51,13 @@ playwright install chromium
 
 Jika Anda ingin memodifikasi kode, menjalankan pengujian, atau mem-build installer sendiri:
 
-### 1. Clone Repositori & Siapkan Virtual Environment
+### Prasyarat Developer
+- Python **3.12+** (centang *Add python.exe to PATH*)
+- **.NET 8 SDK** ([dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/8.0))
+- Git for Windows & Google Chrome
+- [Inno Setup 6 atau 7](https://jrsoftware.org/isdl.php) *(jika ingin mem-build `.exe` installer)*
+
+### 1. Clone & Siapkan Environment
 ```powershell
 git clone https://github.com/viogustian/magang-log-portal.git
 cd magang-log-portal
@@ -89,17 +65,17 @@ cd magang-log-portal
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-pip install -e ".[dev]"
+pip install -e ".[dev,build]"
 playwright install chromium
 ```
 
 ### 2. Menjalankan Aplikasi Desktop saat Development
 ```powershell
-# Menjalankan GUI Desktop (.NET 8 WinForms) — otomatis menyalakan backend FastAPI di 127.0.0.1:8765
+# Menjalankan GUI Desktop (.NET 8 WinForms) — otomatis menyalakan backend lokal di 127.0.0.1:8765
 dotnet run --project desktop/MagangLog.Desktop/MagangLog.Desktop.csproj
 ```
 
-Atau jalankan hanya server backend secara terpisah:
+Atau jalankan server backend secara terpisah:
 ```powershell
 magang-log ui --port 8765 --server-only
 ```
@@ -116,19 +92,19 @@ ruff check src tests
 dotnet test desktop/MagangLog.slnx
 ```
 
-### 4. Mem-build Installer Windows (`.exe`) Sendiri
-Pastikan [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) dan [Inno Setup 6 atau 7](https://jrsoftware.org/isdl.php) sudah terpasang di Windows, lalu jalankan:
+### 4. Mem-build Installer Standalone (`.exe`)
+Skrip berikut otomatis mengompilasi `.NET 8 Desktop`, membundle `Backend Python` via PyInstaller, lalu mem-package semuanya ke Inno Setup:
 
 ```powershell
 .\build-installer.ps1
 ```
-Hasil installer siap distribusi akan dibuat di: `dist\installer\MagangLogPortal_Setup_v2.0.0.exe`.
+Hasil installer siap distribusi akan tersimpan di: `dist\installer\MagangLogPortal_Setup_v2.0.0.exe`.
 
 ---
 
 ## Panduan Singkat CLI (`magang-log` / `magang-portal`)
 
-Selain menggunakan tampilan Desktop GUI, seluruh fitur juga dapat dijalankan langsung lewat terminal (pastikan `.venv` aktif):
+Seluruh perintah CLI juga tersedia untuk pengguna tingkat lanjut (baik lewat `backend\magang-log.exe` di folder instalasi maupun `magang-log` di `.venv` developer):
 
 | Perintah | Fungsi |
 | :--- | :--- |
@@ -151,7 +127,7 @@ Selain menggunakan tampilan Desktop GUI, seluruh fitur juga dapat dijalankan lan
 
 ## Keamanan & Privasi Data
 
-- **Penyimpanan Lokal:** Kunci API Gemini (`.env`), konfigurasi pribadi (`config/config.yaml`), sesi login (`data/auth/state.json`), database ledger (`data/state.db`), dan log (`data/logs/`) disimpan **sepenuhnya di komputer Anda** dan sudah dikecualikan dari Git melalui `.gitignore`.
+- **Penyimpanan Lokal:** Kunci API Gemini (`.env`), konfigurasi pribadi (`config/config.yaml`), sesi login (`data/auth/state.json`), database ledger (`data/state.db`), dan log (`data/logs/`) disimpan **sepenuhnya di komputer Anda** dan dikecualikan dari Git melalui `.gitignore`.
 - **Server Loopback Ketat:** Backend FastAPI hanya mengikat alamat lokal (`127.0.0.1`) dan tidak terbuka ke jaringan luar.
 - **Anti-Pemalsuan:** Aplikasi tidak pernah memalsukan lokasi perangkat maupun mencentang pernyataan kirim otomatis tanpa persetujuan eksplisit Anda (`approved_at`).
 
@@ -159,12 +135,14 @@ Selain menggunakan tampilan Desktop GUI, seluruh fitur juga dapat dijalankan lan
 
 ## Pemecahan Masalah Umum (Troubleshooting)
 
+- **Windows memblokir installer saat dibuka (SmartScreen *"Windows protected your PC"*):**
+  Klik **More info** lalu pilih **Run anyway**. Installer open-source ini dikompilasi bersih dari repositori ini tanpa sertifikat *code-signing* komersial.
 - **Aplikasi Desktop menampilkan status server *Offline*:**
-  Pastikan Python >= 3.12 sudah terpasang di `PATH` dan langkah `pip install -e .` sudah dijalankan di dalam `.venv` pada folder aplikasi. Cek apakah port `8765` tidak sedang dipakai aplikasi lain.
-- **Playwright gagal membuka browser:**
-  Jalankan ulang `playwright install chromium` di dalam `.venv` dan pastikan Google Chrome sudah terinstal di Windows.
+  Tunggu beberapa detik saat peluncuran awal, atau pastikan port `8765` tidak sedang dipakai aplikasi lain lalu buka ulang aplikasi.
+- **Gagal membuka browser saat klik Login Portal:**
+  Pastikan **Google Chrome** terinstal di Windows.
 - **Gagal mengisi laporan karena lokasi (`LOKASI_TIDAK_TERSEDIA`):**
-  Pastikan izin lokasi (*Location Services*) di Windows aktif dan izinkan akses lokasi saat jendela Chrome portal terbuka.
+  Aktifkan *Location Services* di pengaturan Windows dan izinkan akses lokasi saat jendela Chrome portal terbuka.
 
 ---
 
