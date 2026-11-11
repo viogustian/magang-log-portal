@@ -7,7 +7,7 @@
 #define MyAppName "MagangLog Portal"
 #define MyAppVersion "2.0.0"
 #define MyAppPublisher "Vio Gustian Nur Alamsyah"
-#define MyAppURL "https://github.com/viogustian"
+#define MyAppURL "https://github.com/viogustian/magang-log-portal"
 #define MyAppExeName "MagangLog.Desktop.exe"
 
 [Setup]
@@ -53,9 +53,14 @@ Name: "startupicon"; Description: "Jalankan otomatis saat Windows startup (Opsio
 ; 1. Biner Aplikasi Desktop .NET 8 (Self-Contained WinForms)
 Source: "publish\desktop-bundle\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; 2. Modul Backend Python & Konfigurasi Bawaan
-Source: "src\*"; DestDir: "{app}\src"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "config\*"; DestDir: "{app}\config"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 2. Modul Backend Python, Prompt, Skrip & Konfigurasi Bawaan (tanpa kredensial/config lokal)
+Source: "src\*"; DestDir: "{app}\src"; Excludes: "__pycache__,*.pyc,*.pyo"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "prompts\*"; DestDir: "{app}\prompts"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "examples\*"; DestDir: "{app}\examples"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "config\config.example.yaml"; DestDir: "{app}\config"; Flags: ignoreversion
+Source: "config\holidays.yaml"; DestDir: "{app}\config"; Flags: ignoreversion
+Source: "config\presets.yaml"; DestDir: "{app}\config"; Flags: ignoreversion
 Source: "pyproject.toml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
