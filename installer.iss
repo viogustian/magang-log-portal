@@ -27,6 +27,8 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=dist\installer
 OutputBaseFilename=MagangLogPortal_Setup_v{#MyAppVersion}
+SetupIconFile=favicon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 ; Arsitektur Sistem 64-bit
 ArchitecturesAllowed=x64compatible

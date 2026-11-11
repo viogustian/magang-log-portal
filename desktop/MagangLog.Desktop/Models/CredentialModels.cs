@@ -39,6 +39,15 @@ public class PortalAuthStatusResponse
 
     [JsonPropertyName("session_status")]
     public string SessionStatus { get; set; } = "missing"; // "active" | "expired" | "missing" | "invalid"
+
+    [JsonPropertyName("login_in_progress")]
+    public bool LoginInProgress { get; set; }
+
+    [JsonPropertyName("login_stage")]
+    public string? LoginStage { get; set; }
+
+    [JsonPropertyName("login_message")]
+    public string? LoginMessage { get; set; }
 }
 
 /// <summary>
@@ -63,6 +72,9 @@ public class OpenLoginResponse
 
     [JsonPropertyName("authenticated")]
     public bool Authenticated { get; set; }
+
+    [JsonIgnore]
+    public bool AlreadyInProgress { get; set; }
 }
 
 /// <summary>

@@ -38,10 +38,14 @@ public class StatusBannerPanel : Panel
             WrapContents = false
         };
 
-        var infoPanel = new Panel
+        var infoPanel = new FlowLayoutPanel
         {
             AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
             Dock = DockStyle.Left,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
             BackColor = Color.Transparent
         };
 
@@ -51,7 +55,7 @@ public class StatusBannerPanel : Panel
             Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular),
             ForeColor = Color.FromArgb(71, 85, 105),
             AutoSize = true,
-            Location = new Point(0, 4)
+            Margin = new Padding(0, 2, 0, 2)
         };
 
         DateLabel = new Label
@@ -60,7 +64,7 @@ public class StatusBannerPanel : Panel
             Font = new Font(Font.FontFamily, 11f, FontStyle.Bold),
             ForeColor = Color.FromArgb(15, 23, 42),
             AutoSize = true,
-            Location = new Point(0, 24)
+            Margin = Padding.Empty
         };
 
         StatusBadgeLabel = new Label

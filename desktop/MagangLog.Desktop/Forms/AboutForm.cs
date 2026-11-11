@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using MagangLog.Desktop.Services;
 
 namespace MagangLog.Desktop.Forms;
 
@@ -60,6 +61,7 @@ public class AboutForm : Form
         Size = new Size(680, 640);
         BackColor = Color.FromArgb(248, 250, 252);
         Padding = new Padding(24, 20, 24, 20);
+        AppIconHelper.ApplyTo(this);
 
         // Header Section (App Icon badge & Title)
         var headerPanel = new Panel
@@ -75,19 +77,35 @@ public class AboutForm : Form
         {
             Width = 56,
             Height = 56,
-            BackColor = Color.FromArgb(30, 58, 138), // Blue-900
+            BackColor = Color.FromArgb(10, 25, 58),
             Dock = DockStyle.Left,
             Margin = new Padding(0, 0, 14, 0)
         };
-        var lblLogo = new Label
+        var appBitmap = AppIconHelper.GetAppBitmap(48);
+        if (appBitmap != null)
         {
-            Text = "ML",
-            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-            ForeColor = Color.White,
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-        logoBadge.Controls.Add(lblLogo);
+            var picLogo = new PictureBox
+            {
+                Image = appBitmap,
+                Dock = DockStyle.Fill,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent
+            };
+            picLogo.Disposed += (_, _) => picLogo.Image?.Dispose();
+            logoBadge.Controls.Add(picLogo);
+        }
+        else
+        {
+            var lblLogo = new Label
+            {
+                Text = "ML",
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                ForeColor = Color.White,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            logoBadge.Controls.Add(lblLogo);
+        }
 
         var titleContainer = new Panel
         {

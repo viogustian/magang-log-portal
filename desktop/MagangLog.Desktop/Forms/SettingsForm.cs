@@ -86,9 +86,7 @@ public class SettingsForm : Form
     private readonly Label _lblGeminiStatus;
     private readonly ComboBox _cboGeminiModel;
     private readonly Button _btnRefreshGeminiModels;
-    private readonly Label _lblPortalStatus;
-    private readonly Button _btnRefreshPortalStatus;
-    private readonly Button _btnOpenPortalLogin;
+    private readonly PortalAuthPanel _portalAuthPanel;
 
     // Tab 7: Requirements Panel
     private readonly RequirementListPanel _requirementPanel;
@@ -293,7 +291,8 @@ public class SettingsForm : Form
     public bool IsApiKeyMasked => _txtGeminiApiKey.UseSystemPasswordChar;
     public string GeminiStatusText => _lblGeminiStatus.Text;
     public bool IsGeminiValid { get; private set; } = false;
-    public string PortalStatusText => _lblPortalStatus.Text;
+    public string PortalStatusText => _portalAuthPanel.StatusLabel.Text;
+    public PortalAuthPanel PortalAuthControl => _portalAuthPanel;
     public string SchedulerDetailsText => _lblSchedulerDetails.Text;
     public Button DeleteGeminiApiKeyButton => _btnDeleteGeminiApiKey;
     public ComboBox GeminiModelComboBox => _cboGeminiModel;
@@ -321,7 +320,7 @@ public class SettingsForm : Form
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9f, FontStyle.Regular);
         BackColor = Color.FromArgb(248, 250, 252);
-        ShowIcon = false;
+        AppIconHelper.ApplyTo(this);
         MaximizeBox = false;
         MinimizeBox = false;
 
@@ -353,7 +352,7 @@ public class SettingsForm : Form
             out _chkNotifyToast, out _cboReminderLeadTime, out _chkNotifyOnSuccess);
         var tab6 = BuildTab6CredentialsAndPortal(out _txtGeminiApiKey, out _chkShowApiKey, out _btnTestGemini,
             out _btnDeleteGeminiApiKey, out _lblGeminiStatus, out _cboGeminiModel, out _btnRefreshGeminiModels,
-            out _lblPortalStatus, out _btnRefreshPortalStatus, out _btnOpenPortalLogin);
+            out _portalAuthPanel);
         var tab7 = BuildTab7Requirements(out _requirementPanel);
 
         TabControl.TabPages.Add(tab1);
@@ -1057,60 +1056,11 @@ public class SettingsForm : Form
         }
     }
 
-    public async Task RefreshPortalAuthStatusAsync()
-    {
-        try
-        {
-            var res = await _apiClient.GetPortalAuthStatusAsync();
-            if (res != null && res.Authenticated)
-            {
-                _lblPortalStatus.Text = $"🟢 Sesi Aktif ({res.Username ?? "User Terautentikasi"})";
-                _lblPortalStatus.ForeColor = Color.FromArgb(22, 101, 52);
-            }
-            else
-            {
-                _lblPortalStatus.Text = "⚪ Belum Login / Sesi Kedaluwarsa";
-                _lblPortalStatus.ForeColor = Color.FromArgb(100, 116, 139);
-            }
-        }
-        catch (Exception ex)
-        {
-            _lblPortalStatus.Text = $"⚠️ Gagal membaca status: {ex.Message}";
-            _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-        }
-    }
+    public Task RefreshPortalAuthStatusAsync() => _portalAuthPanel.RefreshAuthStatusAsync();
 
-    public async Task OpenPortalLoginAsync()
-    {
-        _btnOpenPortalLogin.Enabled = false;
-        _lblPortalStatus.Text = "⏳ Meluncurkan peramban interaktif Playwright...";
-        _lblPortalStatus.ForeColor = Color.FromArgb(71, 85, 105);
+    public Task OpenPortalLoginAsync() => _portalAuthPanel.OpenPortalLoginAsync();
 
-        try
-        {
-            var res = await _apiClient.OpenPortalLoginAsync(180);
-            if (res != null && res.Success)
-            {
-                _lblPortalStatus.Text = res.Authenticated ? "🟢 Login Berhasil!" : "ℹ️ Sesi login selesai.";
-                _lblPortalStatus.ForeColor = Color.FromArgb(22, 101, 52);
-                await RefreshPortalAuthStatusAsync();
-            }
-            else
-            {
-                _lblPortalStatus.Text = $"🔴 {res?.Message ?? "Gagal membuka login."}";
-                _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-            }
-        }
-        catch (Exception ex)
-        {
-            _lblPortalStatus.Text = $"🔴 Error: {ex.Message}";
-            _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-        }
-        finally
-        {
-            _btnOpenPortalLogin.Enabled = true;
-        }
-    }
+    public Task ConfirmPortalLoginAsync() => _portalAuthPanel.ConfirmPortalLoginAsync();
 
     #endregion
 
@@ -2174,9 +2124,7 @@ public class SettingsForm : Form
         out Label lblGeminiStatus,
         out ComboBox cboGeminiModel,
         out Button btnRefreshModels,
-        out Label lblPortalStatus,
-        out Button btnRefreshPortal,
-        out Button btnOpenLogin)
+        out PortalAuthPanel portalAuthPanel)
     {
         var page = new TabPage("Kredensial & Portal")
         {
@@ -2320,67 +2268,16 @@ public class SettingsForm : Form
         grpGemini.Controls.Add(lblKeyNote);
 
         // 2. MagangHub Kemnaker Portal Authentication Group
-        var grpPortal = new GroupBox
+        portalAuthPanel = new PortalAuthPanel(
+            _apiClient,
+            groupTitle: "Sesi Autentikasi Portal Monev Kemnaker",
+            panelHeight: 162,
+            cardBackColor: Color.White)
         {
-            Text = "Sesi & Autentikasi Portal Monev Kemnaker",
-            Dock = DockStyle.Top,
-            Height = 170,
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(30, 41, 59),
-            Padding = new Padding(12),
             Margin = new Padding(0, 12, 0, 0)
         };
 
-        lblPortalStatus = new Label
-        {
-            Text = "⚪ Memeriksa status sesi portal...",
-            Location = new Point(16, 28),
-            Size = new Size(600, 24),
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(71, 85, 105)
-        };
-
-        btnRefreshPortal = new Button
-        {
-            Text = "🔄 Cek Status Sesi",
-            Location = new Point(16, 60),
-            Size = new Size(150, 32),
-            BackColor = Color.FromArgb(241, 245, 249),
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
-            Cursor = Cursors.Hand
-        };
-        btnRefreshPortal.Click += async (_, _) => await RefreshPortalAuthStatusAsync();
-
-        btnOpenLogin = new Button
-        {
-            Text = "🌐 Buka Browser Login Portal",
-            Location = new Point(175, 60),
-            Size = new Size(220, 32),
-            BackColor = Color.FromArgb(16, 185, 129),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold),
-            Cursor = Cursors.Hand
-        };
-        btnOpenLogin.FlatAppearance.BorderSize = 0;
-        btnOpenLogin.Click += async (_, _) => await OpenPortalLoginAsync();
-
-        var lblPortalHelp = new Label
-        {
-            Text = "Tombol di atas meluncurkan peramban interaktif Playwright untuk login ke akun Monev Kemnaker Anda. Setelah Anda masuk, status autentikasi disimpan aman di storage state lokal.",
-            Location = new Point(16, 102),
-            Size = new Size(680, 45),
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(100, 116, 139)
-        };
-
-        grpPortal.Controls.Add(lblPortalStatus);
-        grpPortal.Controls.Add(btnRefreshPortal);
-        grpPortal.Controls.Add(btnOpenLogin);
-        grpPortal.Controls.Add(lblPortalHelp);
-
-        page.Controls.Add(grpPortal);
+        page.Controls.Add(portalAuthPanel);
         page.Controls.Add(grpGemini);
 
         return page;

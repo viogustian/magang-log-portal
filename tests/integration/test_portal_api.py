@@ -74,3 +74,34 @@ def test_post_open_login_concurrent_guard(client: TestClient) -> None:
         response = client.post("/api/portal/open-login", json={"timeout_seconds": 60})
         assert response.status_code == 409
         assert "already in progress" in response.json()["detail"]
+
+        # Auth status must surface active login progress for UI polling
+        status_resp = client.get("/api/portal/auth-status")
+        assert status_resp.status_code == 200
+        status_data = status_resp.json()
+        assert status_data["login_in_progress"] is True
+
+
+def test_post_confirm_login_returns_service_result(client: TestClient) -> None:
+    with patch(
+        "magang_log.server.services.portal_service.PortalAuthService.confirm_interactive_login",
+        return_value=(True, True, "Login berhasil, sesi autentikasi tersimpan."),
+    ):
+        response = client.post("/api/portal/confirm-login")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["authenticated"] is True
+        assert "Login berhasil" in data["message"]
+
+
+def test_post_cancel_login_returns_ok(client: TestClient) -> None:
+    with patch(
+        "magang_log.server.services.portal_service.PortalAuthService.cancel_interactive_login",
+        return_value=True,
+    ) as mock_cancel:
+        response = client.post("/api/portal/cancel-login")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cancelled"] is True
+        mock_cancel.assert_called_once()

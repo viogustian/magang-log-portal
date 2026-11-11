@@ -722,5 +722,30 @@ public class MainDashboardFormTests
             Assert.Contains(handler.SentRequests, r => r.RequestUri!.AbsolutePath.Contains("/api/evidence/today"));
         });
     }
+
+    [Fact]
+    public void TestMainDashboardForm_PanelsAndStatusBannerDoNotOverlap()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("{}");
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var form = new MainDashboardForm(client);
+            form.CreateControl();
+            form.PerformLayout();
+
+            var headerPanel = form.Controls.OfType<Panel>().First(p => p.Dock == DockStyle.Top && p != form.StatusBanner);
+            Assert.True(form.StatusBanner.Top >= headerPanel.Bottom);
+            Assert.True(form.MainSplitContainer.Top >= form.StatusBanner.Bottom);
+            Assert.True(form.MainSplitContainer.Bottom <= form.CalendarPanel.Top);
+
+            // StatusBanner title & DateLabel stacked vertically without overlap
+            var leftFlow = form.StatusBanner.Controls.OfType<FlowLayoutPanel>().First(f => f.Dock == DockStyle.Left);
+            var infoStack = leftFlow.Controls.OfType<FlowLayoutPanel>().Single();
+            var infoLabels = infoStack.Controls.OfType<Label>().ToList();
+            Assert.Equal(2, infoLabels.Count);
+            Assert.True(infoLabels[1].Top >= infoLabels[0].Bottom);
+        });
+    }
 }
 

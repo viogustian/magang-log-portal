@@ -34,11 +34,13 @@ public class CalendarPanel : Panel
         Padding = new Padding(16, 8, 16, 8);
 
         // Header Panel (Nav buttons, month title, and status legends)
+        var headerTextHeight = TextRenderer.MeasureText("Kalender", new Font("Segoe UI", 10.5f, FontStyle.Bold)).Height;
         var headerPanel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 36,
-            BackColor = Color.Transparent
+            Height = Math.Max(38, headerTextHeight + 14),
+            BackColor = Color.White,
+            Padding = new Padding(0, 0, 0, 4)
         };
 
         var navFlow = new FlowLayoutPanel
@@ -116,7 +118,7 @@ public class CalendarPanel : Panel
         };
         legendFlow.Controls.Add(CreateLegendBadge("🟢 Terkirim", Color.FromArgb(22, 101, 52)));
         legendFlow.Controls.Add(CreateLegendBadge("🟡 Perlu Input", Color.FromArgb(133, 77, 14)));
-        legendFlow.Controls.Add(CreateLegendBadge("⚪ Libur/Akhir Pekan", Color.FromArgb(71, 85, 105)));
+        legendFlow.Controls.Add(CreateLegendBadge("⚪ Libur", Color.FromArgb(71, 85, 105)));
         legendFlow.Controls.Add(CreateLegendBadge("🔴 Terkunci", Color.FromArgb(153, 27, 27)));
 
         headerPanel.Controls.Add(navFlow);
@@ -141,16 +143,20 @@ public class CalendarPanel : Panel
             EnableHeadersVisualStyles = false
         };
 
+        var colHeaderFont = new Font("Segoe UI", 9f, FontStyle.Bold);
         CalendarGrid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
         {
             Alignment = DataGridViewContentAlignment.MiddleCenter,
             BackColor = Color.FromArgb(241, 245, 249),
             ForeColor = Color.FromArgb(51, 65, 85),
-            Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+            Font = colHeaderFont,
             SelectionBackColor = Color.FromArgb(241, 245, 249),
             SelectionForeColor = Color.FromArgb(51, 65, 85)
         };
-        CalendarGrid.ColumnHeadersHeight = 26;
+        CalendarGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        CalendarGrid.ColumnHeadersHeight = Math.Max(
+            28,
+            TextRenderer.MeasureText("Min", colHeaderFont, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.SingleLine).Height + 10);
 
         var colNames = new[] { "Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min" };
         foreach (var colName in colNames)
@@ -174,12 +180,53 @@ public class CalendarPanel : Panel
         CalendarGrid.CellFormatting += OnCellFormatting;
         CalendarGrid.CellClick += OnCellClick;
         CalendarGrid.CellDoubleClick += OnCellClick;
+        CalendarGrid.SizeChanged += (_, _) => FitCalendarRows();
 
         Controls.Add(CalendarGrid);
+        // Ensure Fill grid docks below headerPanel instead of underneath it.
+        CalendarGrid.BringToFront();
 
         // Initialize with current month
         var now = DateTime.Today;
         SetMonth(now.Year, now.Month);
+    }
+
+    /// <summary>
+    /// Returns the total panel height needed to fit header, column headers, and the requested number of week rows.
+    /// </summary>
+    public int GetPreferredHeight(int rows = 6)
+    {
+        var headerHeight = Controls.OfType<Panel>().FirstOrDefault(p => p.Dock == DockStyle.Top)?.Height ?? 38;
+        var minRowHeight = GetMinimumRowHeight();
+        return Padding.Vertical + headerHeight + CalendarGrid.ColumnHeadersHeight + (Math.Max(1, rows) * minRowHeight) + 6;
+    }
+
+    private int GetMinimumRowHeight()
+    {
+        var cellFont = CalendarGrid.Columns.Count > 0
+            ? CalendarGrid.Columns[0].DefaultCellStyle.Font ?? CalendarGrid.Font
+            : CalendarGrid.Font;
+        var textH = TextRenderer.MeasureText("30", cellFont, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.SingleLine).Height;
+        return Math.Max(26, textH + 8);
+    }
+
+    private void FitCalendarRows()
+    {
+        if (CalendarGrid.RowCount <= 0)
+        {
+            return;
+        }
+
+        var available = CalendarGrid.ClientSize.Height - CalendarGrid.ColumnHeadersHeight - 2;
+        var minRowHeight = GetMinimumRowHeight();
+        var targetHeight = available >= minRowHeight * CalendarGrid.RowCount
+            ? available / CalendarGrid.RowCount
+            : minRowHeight;
+
+        for (int r = 0; r < CalendarGrid.RowCount; r++)
+        {
+            CalendarGrid.Rows[r].Height = targetHeight;
+        }
     }
 
     private static Label CreateLegendBadge(string text, Color color)
@@ -206,13 +253,13 @@ public class CalendarPanel : Panel
         CalendarGrid.RowCount = CurrentMatrix.Count;
         for (int r = 0; r < CurrentMatrix.Count; r++)
         {
-            CalendarGrid.Rows[r].Height = 26;
             for (int c = 0; c < 7; c++)
             {
                 var cellModel = CurrentMatrix[r][c];
                 CalendarGrid.Rows[r].Cells[c].Value = cellModel.DayNumber?.ToString() ?? string.Empty;
             }
         }
+        FitCalendarRows();
         CalendarGrid.Invalidate();
     }
 

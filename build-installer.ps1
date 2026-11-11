@@ -49,12 +49,14 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+$iconPath = (Resolve-Path "favicon.ico").Path
 & $pythonExe -m PyInstaller `
     --onedir `
     --console `
     --noconfirm `
     --clean `
     --name magang-log `
+    --icon $iconPath `
     --distpath $backendDistDir `
     --workpath $pyiBuildDir `
     --specpath $pyiBuildDir `

@@ -20,7 +20,8 @@ public class BackendApiClient
 
     public BackendApiClient(HttpClient? httpClient = null, string baseUrl = "http://127.0.0.1:8765")
     {
-        _httpClient = httpClient ?? new HttpClient();
+        // Interactive Playwright login flows can wait up to 5 minutes; avoid .NET's 100s default abort.
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _baseUrl = baseUrl.TrimEnd('/');
     }
 
@@ -636,6 +637,27 @@ public class BackendApiClient
         }
     }
 
+    private static string ExtractErrorDetail(string body, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("detail", out var detailProp))
+            {
+                var detail = detailProp.GetString();
+                if (!string.IsNullOrWhiteSpace(detail))
+                {
+                    return detail;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore JSON parse failures on non-JSON error responses.
+        }
+        return fallback;
+    }
+
     /// <summary>
     /// Launches interactive login browser for portal Monev Kemnaker via POST /api/portal/open-login.
     /// </summary>
@@ -650,18 +672,74 @@ public class BackendApiClient
             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync($"{_baseUrl}/api/portal/open-login", content, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                return new OpenLoginResponse { Success = false, Message = "Gagal meluncurkan browser login.", Authenticated = false };
+                var fallback = response.StatusCode == System.Net.HttpStatusCode.Conflict
+                    ? "Sesi browser login sudah terbuka. Klik 'Sudah Selesai Login' setelah masuk portal."
+                    : "Gagal meluncurkan browser login.";
+                return new OpenLoginResponse
+                {
+                    Success = false,
+                    Message = ExtractErrorDetail(json, fallback),
+                    Authenticated = false,
+                    AlreadyInProgress = response.StatusCode == System.Net.HttpStatusCode.Conflict
+                };
             }
 
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             return JsonSerializer.Deserialize<OpenLoginResponse>(json, JsonOptions)
                    ?? new OpenLoginResponse { Success = false };
         }
         catch (Exception ex)
         {
             return new OpenLoginResponse { Success = false, Message = ex.Message, Authenticated = false };
+        }
+    }
+
+    /// <summary>
+    /// Signals the active interactive browser login session to verify portal state and save cookies/storage now.
+    /// </summary>
+    public virtual async Task<OpenLoginResponse?> ConfirmPortalLoginAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/portal/confirm-login", content, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new OpenLoginResponse
+                {
+                    Success = false,
+                    Message = ExtractErrorDetail(json, "Gagal memverifikasi login di browser."),
+                    Authenticated = false
+                };
+            }
+
+            return JsonSerializer.Deserialize<OpenLoginResponse>(json, JsonOptions)
+                   ?? new OpenLoginResponse { Success = false };
+        }
+        catch (Exception ex)
+        {
+            return new OpenLoginResponse { Success = false, Message = ex.Message, Authenticated = false };
+        }
+    }
+
+    /// <summary>
+    /// Requests cancellation of an active interactive Playwright login window via POST /api/portal/cancel-login.
+    /// </summary>
+    public virtual async Task<bool> CancelPortalLoginAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_baseUrl}/api/portal/cancel-login", content, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
         }
     }
 

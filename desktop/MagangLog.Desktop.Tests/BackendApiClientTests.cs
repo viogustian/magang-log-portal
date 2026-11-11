@@ -748,5 +748,43 @@ public class BackendApiClientTests
         Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
         Assert.EndsWith("/api/setup/delete-gemini-key", handler.SentRequests[0].RequestUri!.AbsolutePath);
     }
+
+    [Fact]
+    public async Task TestConfirmPortalLoginAsync_Success()
+    {
+        var cannedJson = """
+        {
+            "success": true,
+            "message": "Login berhasil, sesi autentikasi tersimpan.",
+            "authenticated": true
+        }
+        """;
+
+        var handler = new MockHttpMessageHandler(cannedJson);
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var response = await client.ConfirmPortalLoginAsync();
+
+        Assert.NotNull(response);
+        Assert.True(response.Success);
+        Assert.True(response.Authenticated);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/portal/confirm-login", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task TestCancelPortalLoginAsync_Success()
+    {
+        var handler = new MockHttpMessageHandler("""{"cancelled": true}""");
+        var client = new BackendApiClient(new HttpClient(handler));
+
+        var cancelled = await client.CancelPortalLoginAsync();
+
+        Assert.True(cancelled);
+        Assert.Single(handler.SentRequests);
+        Assert.Equal(HttpMethod.Post, handler.SentRequests[0].Method);
+        Assert.EndsWith("/api/portal/cancel-login", handler.SentRequests[0].RequestUri!.AbsolutePath);
+    }
 }
 

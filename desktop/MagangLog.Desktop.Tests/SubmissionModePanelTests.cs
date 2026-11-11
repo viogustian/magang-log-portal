@@ -255,5 +255,113 @@ public class SubmissionModePanelTests
             Assert.Contains("Sesi Aktif", panel.PortalStatusLabel.Text);
         });
     }
+
+    [Fact]
+    public async Task SubmissionMode_RefreshAuthStatus_LoginInProgress_EnablesConfirmButton()
+    {
+        await RunStaAsync(async () =>
+        {
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("/auth-status"))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""
+                        {
+                            "authenticated": false,
+                            "session_status": "missing",
+                            "login_in_progress": true,
+                            "login_stage": "awaiting_user",
+                            "login_message": "Browser Chrome terbuka. Klik 'Sudah Selesai Login'."
+                        }
+                        """, System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            });
+
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var panel = new SubmissionModePanel(client);
+
+            await panel.RefreshAuthStatusAsync();
+
+            Assert.False(panel.IsPortalAuthenticated);
+            Assert.True(panel.ConfirmLoginButton.Enabled);
+            Assert.False(panel.OpenLoginButton.Enabled);
+            Assert.Contains("Sudah Selesai Login", panel.PortalStatusLabel.Text);
+        });
+    }
+
+    [Fact]
+    public async Task SubmissionMode_ConfirmPortalLogin_Success_And_PendingStates()
+    {
+        await RunStaAsync(async () =>
+        {
+            var loggedIn = false;
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                if (req.RequestUri!.AbsolutePath.Contains("/confirm-login"))
+                {
+                    if (!loggedIn)
+                    {
+                        loggedIn = true;
+                        return new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("""
+                            {
+                                "success": false,
+                                "authenticated": false,
+                                "message": "Browser masih berada di halaman login Kemnaker."
+                            }
+                            """, System.Text.Encoding.UTF8, "application/json")
+                        };
+                    }
+
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""
+                        {
+                            "success": true,
+                            "authenticated": true,
+                            "message": "Login berhasil, sesi autentikasi tersimpan."
+                        }
+                        """, System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
+
+                if (req.RequestUri!.AbsolutePath.Contains("/auth-status"))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("""
+                        {
+                            "authenticated": true,
+                            "username": "vio.gustian",
+                            "session_status": "active"
+                        }
+                        """, System.Text.Encoding.UTF8, "application/json")
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            });
+
+            var client = new BackendApiClient(new HttpClient(handler));
+            using var panel = new SubmissionModePanel(client);
+
+            // First confirm while still on login page: warning shown and confirm stays enabled
+            await panel.ConfirmPortalLoginAsync();
+            Assert.False(panel.IsPortalAuthenticated);
+            Assert.True(panel.ConfirmLoginButton.Enabled);
+            Assert.Contains("halaman login Kemnaker", panel.PortalStatusLabel.Text);
+
+            // Second confirm after finishing login: session becomes active and button resets
+            await panel.ConfirmPortalLoginAsync();
+            Assert.True(panel.IsPortalAuthenticated);
+            Assert.False(panel.ConfirmLoginButton.Enabled);
+            Assert.Contains("Sesi Aktif", panel.PortalStatusLabel.Text);
+        });
+    }
 }
 

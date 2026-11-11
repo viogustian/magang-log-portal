@@ -152,4 +152,39 @@ public class CalendarPanelTests
             Assert.Equal(Color.LightGreen.ToArgb(), color.ToArgb());
         });
     }
+
+    [Fact]
+    public void TestCalendarLayout_HeaderDoesNotOverlapGridAndSixWeekMonthFitsCleanly()
+    {
+        RunSta(() =>
+        {
+            using var dashboard = new MagangLog.Desktop.Forms.MainDashboardForm();
+            dashboard.Width = dashboard.MinimumSize.Width; // 800px narrowest supported width
+            dashboard.CreateControl();
+            dashboard.PerformLayout();
+
+            var panel = dashboard.CalendarPanel;
+            panel.SetMonth(2026, 11); // November 2026 spans 6 calendar rows
+            panel.PerformLayout();
+
+            var headerPanel = panel.Controls.OfType<Panel>().Single(c => c.Dock == DockStyle.Top);
+            Assert.True(
+                panel.CalendarGrid.Top >= headerPanel.Bottom,
+                $"CalendarGrid.Top ({panel.CalendarGrid.Top}) overlaps headerPanel.Bottom ({headerPanel.Bottom}).");
+
+            var flows = headerPanel.Controls.OfType<FlowLayoutPanel>().ToList();
+            var navFlow = flows.Single(f => f.Dock == DockStyle.Left);
+            var legendFlow = flows.Single(f => f.Dock == DockStyle.Right);
+            Assert.True(
+                legendFlow.Left >= navFlow.Right,
+                $"legendFlow.Left ({legendFlow.Left}) collides with navFlow.Right ({navFlow.Right}) at minimum width.");
+
+            Assert.Equal(6, panel.CalendarGrid.RowCount);
+            int totalRowsHeight = panel.CalendarGrid.Rows.Cast<DataGridViewRow>().Sum(r => r.Height);
+            int neededHeight = panel.CalendarGrid.ColumnHeadersHeight + totalRowsHeight;
+            Assert.True(
+                neededHeight <= panel.CalendarGrid.ClientSize.Height + 2,
+                $"6-row month needs {neededHeight}px inside CalendarGrid, exceeds ClientSize.Height ({panel.CalendarGrid.ClientSize.Height}px).");
+        });
+    }
 }

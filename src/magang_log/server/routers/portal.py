@@ -85,3 +85,29 @@ async def open_login(req: OpenLoginRequest) -> dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {exc}",
         ) from exc
+
+
+@router.post(
+    "/confirm-login",
+    response_model=OpenLoginResponse,
+    summary="Confirm interactive login completion and capture portal session",
+)
+async def confirm_login() -> dict[str, Any]:
+    """Signal the active login browser to verify authentication and persist state.json."""
+    service = get_portal_auth_service()
+    success, authenticated, message = await anyio.to_thread.run_sync(service.confirm_interactive_login)
+    return {
+        "success": success,
+        "message": message,
+        "authenticated": authenticated,
+    }
+
+
+@router.post(
+    "/cancel-login",
+    summary="Cancel an active interactive login browser session",
+)
+def cancel_login() -> dict[str, bool]:
+    """Request cleanup and closure of any active headed login browser."""
+    service = get_portal_auth_service()
+    return {"cancelled": service.cancel_interactive_login()}

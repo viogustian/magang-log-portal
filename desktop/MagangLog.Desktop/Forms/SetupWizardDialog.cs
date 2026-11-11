@@ -60,28 +60,40 @@ public class SetupWizardDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        Size = new Size(760, 620);
-        MinimumSize = new Size(720, 560);
-        BackColor = Color.White;
-
         // Top: Step Indicator Panel
         _indicator = new StepIndicatorPanel();
+
+        var frameOverhead = Width - ClientSize.Width;
+        var minClientWidth = Math.Max(760, _indicator.GetRequiredMinimumWidth() + 16);
+        var defaultClientWidth = Math.Max(840, minClientWidth + 24);
+        var dpiScale = Math.Max(1f, DeviceDpi / 96f);
+
+        MinimumSize = new Size(
+            minClientWidth + Math.Max(16, frameOverhead),
+            (int)Math.Ceiling(580 * dpiScale));
+        Size = new Size(
+            defaultClientWidth + Math.Max(16, frameOverhead),
+            (int)Math.Ceiling(650 * dpiScale));
+        BackColor = Color.White;
+        AppIconHelper.ApplyTo(this);
+
         Controls.Add(_indicator);
 
         // Bottom: Navigation Panel
+        var navTextHeight = TextRenderer.MeasureText("Aj", new Font(Font.FontFamily, 9.5f, FontStyle.Bold)).Height;
         var navPanel = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 64,
+            Height = Math.Max(64, navTextHeight + 42),
             BackColor = Color.FromArgb(248, 250, 252),
             Padding = new Padding(20, 14, 20, 14)
         };
 
         _lblStatus = new Label
         {
-            Dock = DockStyle.Left,
+            Dock = DockStyle.Fill,
             AutoSize = false,
-            Width = 420,
+            Padding = new Padding(0, 0, 12, 0),
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(100, 116, 139),
             Font = new Font(Font.FontFamily, 9f, FontStyle.Regular)
@@ -118,9 +130,12 @@ public class SetupWizardDialog : Form
         _btnBack.FlatAppearance.BorderSize = 0;
         _btnBack.Click += (_, _) => NavigateBack();
 
-        navPanel.Controls.Add(_lblStatus);
+        var spacer = new Panel { Dock = DockStyle.Right, Width = 8 };
         navPanel.Controls.Add(_btnBack);
+        navPanel.Controls.Add(spacer);
         navPanel.Controls.Add(_btnNext);
+        navPanel.Controls.Add(_lblStatus);
+        _lblStatus.BringToFront();
         Controls.Add(navPanel);
 
         // Center: Content Container managing 6 step panels
@@ -148,9 +163,10 @@ public class SetupWizardDialog : Form
         _requirementPanel.Dock = DockStyle.Fill;
         _requirementPanel.GateStateChanged += (_, _) => EvaluateGateState();
 
-        _stepPanels[0].Controls.Add(_requirementPanel);
         _stepPanels[0].Controls.Add(_geminiCard);
         _geminiCard.BringToFront();
+        _stepPanels[0].Controls.Add(_requirementPanel);
+        _requirementPanel.BringToFront();
 
         // Initialize and host FolderListPanel in Step 1
         _folderPanel = new FolderListPanel(_apiClient);
@@ -184,6 +200,8 @@ public class SetupWizardDialog : Form
         _summaryPanel.BringToFront();
 
         Controls.Add(_contentContainer);
+        // Ensure Fill content docks last, leaving _indicator (Top) and navPanel (Bottom) unobstructed.
+        _contentContainer.BringToFront();
 
         // Activate step 0
         GoToStep(0);
@@ -613,22 +631,43 @@ public class SetupWizardDialog : Form
             "Tinjau kembali seluruh pilihan konfigurasi sebelum menyelesaikan penyiapan."
         };
 
+        var headerFont = new Font(Font.FontFamily, 13f, FontStyle.Bold);
+        var headerHeight = Math.Max(
+            34,
+            TextRenderer.MeasureText(
+                titles[stepIndex],
+                headerFont,
+                new Size(int.MaxValue, int.MaxValue),
+                TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Height + 8);
+
         var header = new Label
         {
             Text = titles[stepIndex],
-            Font = new Font(Font.FontFamily, 13f, FontStyle.Bold),
+            Font = headerFont,
             ForeColor = Color.FromArgb(15, 23, 42),
             Dock = DockStyle.Top,
-            Height = 32
+            Height = headerHeight,
+            UseMnemonic = false
         };
+
+        var subFont = new Font(Font.FontFamily, 9.5f, FontStyle.Regular);
+        var subHeight = Math.Max(
+            30,
+            TextRenderer.MeasureText(
+                subtitles[stepIndex],
+                subFont,
+                new Size(int.MaxValue, int.MaxValue),
+                TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Height + 10);
 
         var subHeader = new Label
         {
             Text = subtitles[stepIndex],
-            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Regular),
+            Font = subFont,
             ForeColor = Color.FromArgb(100, 116, 139),
             Dock = DockStyle.Top,
-            Height = 26
+            Height = subHeight,
+            Padding = new Padding(0, 0, 0, 6),
+            UseMnemonic = false
         };
 
         panel.Controls.Add(subHeader);

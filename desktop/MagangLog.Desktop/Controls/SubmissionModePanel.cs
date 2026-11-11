@@ -20,17 +20,16 @@ public class SubmissionModePanel : Panel
 
     private readonly Panel _pnlFullAccessWarning;
     private readonly CheckBox _chkFullAccessConfirm;
-    private readonly Label _lblPortalStatus;
-    private readonly Button _btnOpenLogin;
-    private readonly Button _btnRefreshPortal;
+    private readonly PortalAuthPanel _portalAuthPanel;
 
     public RadioButton RadioReview => _rdoReview;
     public RadioButton RadioAuto => _rdoAuto;
     public RadioButton RadioNotify => _rdoNotify;
-    public Label PortalStatusLabel => _lblPortalStatus;
-    public Button OpenLoginButton => _btnOpenLogin;
-    public Button RefreshPortalButton => _btnRefreshPortal;
-    public bool IsPortalAuthenticated { get; private set; } = false;
+    public Label PortalStatusLabel => _portalAuthPanel.StatusLabel;
+    public Button OpenLoginButton => _portalAuthPanel.OpenLoginButton;
+    public Button ConfirmLoginButton => _portalAuthPanel.ConfirmLoginButton;
+    public Button RefreshPortalButton => _portalAuthPanel.RefreshStatusButton;
+    public bool IsPortalAuthenticated => _portalAuthPanel.IsAuthenticated;
 
     public event EventHandler? ModeChanged;
 
@@ -166,68 +165,13 @@ public class SubmissionModePanel : Panel
         _pnlFullAccessWarning.Controls.Add(lblWarningTitle);
 
         // --- Portal Authentication Section ---
-        var grpPortal = new GroupBox
+        _portalAuthPanel = new PortalAuthPanel(
+            _apiClient,
+            groupTitle: "Sesi Autentikasi Portal Monev MagangHub Kemnaker",
+            panelHeight: 152)
         {
-            Text = "Sesi & Autentikasi Portal Monev MagangHub Kemnaker",
-            Dock = DockStyle.Top,
-            Height = 145,
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(30, 41, 59),
-            BackColor = Color.FromArgb(248, 250, 252),
-            Padding = new Padding(12, 8, 12, 8),
             Margin = new Padding(0, 8, 0, 8)
         };
-
-        _lblPortalStatus = new Label
-        {
-            Text = "⚪ Status Sesi: Belum login / memeriksa sesi...",
-            Location = new Point(14, 24),
-            Size = new Size(620, 20),
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(71, 85, 105)
-        };
-
-        _btnOpenLogin = new Button
-        {
-            Text = "🌐 Buka Browser Login Monev",
-            Location = new Point(14, 48),
-            Size = new Size(220, 32),
-            BackColor = Color.FromArgb(16, 185, 129),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold),
-            Cursor = Cursors.Hand
-        };
-        _btnOpenLogin.FlatAppearance.BorderSize = 0;
-        _btnOpenLogin.Click += async (_, _) => await OpenPortalLoginAsync();
-
-        _btnRefreshPortal = new Button
-        {
-            Text = "🔄 Cek Status Sesi",
-            Location = new Point(242, 48),
-            Size = new Size(130, 32),
-            BackColor = Color.FromArgb(241, 245, 249),
-            ForeColor = Color.FromArgb(30, 41, 59),
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font(Font.FontFamily, 8.5f, FontStyle.Regular),
-            Cursor = Cursors.Hand
-        };
-        _btnRefreshPortal.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
-        _btnRefreshPortal.Click += async (_, _) => await RefreshAuthStatusAsync();
-
-        var lblPortalHelp = new Label
-        {
-            Text = "Meluncurkan peramban Playwright interaktif untuk login akun Monev MagangHub Kemnaker. Sesi login akan disimpan aman di file state lokal (data/auth/state.json) agar logbook dapat diserahkan ke portal.",
-            Location = new Point(14, 88),
-            Size = new Size(650, 48),
-            Font = new Font(Font.FontFamily, 8f, FontStyle.Regular),
-            ForeColor = Color.FromArgb(100, 116, 139)
-        };
-
-        grpPortal.Controls.Add(_lblPortalStatus);
-        grpPortal.Controls.Add(_btnOpenLogin);
-        grpPortal.Controls.Add(_btnRefreshPortal);
-        grpPortal.Controls.Add(lblPortalHelp);
 
         // --- Notification Banner ---
         var notificationBanner = new Panel
@@ -259,7 +203,7 @@ public class SubmissionModePanel : Panel
         // Assemble controls (Dock order)
         Controls.Add(notificationBanner);
         Controls.Add(spacer);
-        Controls.Add(grpPortal);
+        Controls.Add(_portalAuthPanel);
         Controls.Add(_pnlFullAccessWarning);
         Controls.Add(optionsPanel);
         Controls.Add(lblTitle);
@@ -352,63 +296,16 @@ public class SubmissionModePanel : Panel
     /// <summary>
     /// Checks session status from backend and updates portal indicator label.
     /// </summary>
-    public async Task RefreshAuthStatusAsync()
-    {
-        try
-        {
-            var res = await _apiClient.GetPortalAuthStatusAsync();
-            if (res != null && res.Authenticated)
-            {
-                IsPortalAuthenticated = true;
-                _lblPortalStatus.Text = $"🟢 Sesi Aktif ({res.Username ?? "User Terautentikasi"})";
-                _lblPortalStatus.ForeColor = Color.FromArgb(22, 101, 52);
-            }
-            else
-            {
-                IsPortalAuthenticated = false;
-                _lblPortalStatus.Text = "⚪ Sesi Belum Ada / Kedaluwarsa (Silakan Login)";
-                _lblPortalStatus.ForeColor = Color.FromArgb(100, 116, 139);
-            }
-        }
-        catch (Exception ex)
-        {
-            _lblPortalStatus.Text = $"⚠️ Gagal membaca status: {ex.Message}";
-            _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-        }
-    }
+    public Task RefreshAuthStatusAsync() => _portalAuthPanel.RefreshAuthStatusAsync();
 
     /// <summary>
     /// Launches interactive login browser for portal Monev Kemnaker.
     /// </summary>
-    public async Task OpenPortalLoginAsync()
-    {
-        _btnOpenLogin.Enabled = false;
-        _lblPortalStatus.Text = "⏳ Meluncurkan peramban interaktif Playwright...";
-        _lblPortalStatus.ForeColor = Color.FromArgb(71, 85, 105);
-        try
-        {
-            var res = await _apiClient.OpenPortalLoginAsync(180);
-            if (res != null && res.Success)
-            {
-                _lblPortalStatus.Text = res.Authenticated ? "🟢 Login Berhasil!" : "ℹ️ Sesi login selesai.";
-                _lblPortalStatus.ForeColor = Color.FromArgb(22, 101, 52);
-                await RefreshAuthStatusAsync();
-            }
-            else
-            {
-                _lblPortalStatus.Text = $"🔴 {res?.Message ?? "Gagal membuka login."}";
-                _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-            }
-        }
-        catch (Exception ex)
-        {
-            _lblPortalStatus.Text = $"🔴 Error: {ex.Message}";
-            _lblPortalStatus.ForeColor = Color.FromArgb(185, 28, 28);
-        }
-        finally
-        {
-            _btnOpenLogin.Enabled = true;
-        }
-    }
+    public Task OpenPortalLoginAsync() => _portalAuthPanel.OpenPortalLoginAsync();
+
+    /// <summary>
+    /// Asks the backend to confirm and capture the active portal login session immediately.
+    /// </summary>
+    public Task ConfirmPortalLoginAsync() => _portalAuthPanel.ConfirmPortalLoginAsync();
 }
 

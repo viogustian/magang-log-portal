@@ -39,6 +39,7 @@ public class DayDetailForm : Form
         Size = new Size(680, 640);
         BackColor = Color.FromArgb(248, 250, 252);
         Padding = new Padding(20);
+        AppIconHelper.ApplyTo(this);
 
         // Header Panel
         var headerPanel = new Panel

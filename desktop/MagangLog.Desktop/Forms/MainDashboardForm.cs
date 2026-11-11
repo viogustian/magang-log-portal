@@ -63,6 +63,7 @@ public class MainDashboardForm : Form
         Size = new Size(1024, 720);
         MinimumSize = new Size(800, 600);
         BackColor = Color.FromArgb(248, 250, 252);
+        AppIconHelper.ApplyTo(this);
 
         // 1. Header Bar (Dock Top)
         var headerPanel = new Panel
@@ -80,8 +81,25 @@ public class MainDashboardForm : Form
             ForeColor = Color.FromArgb(15, 23, 42),
             Dock = DockStyle.Left,
             AutoSize = true,
+            Padding = new Padding(8, 0, 0, 0),
             TextAlign = ContentAlignment.MiddleLeft
         };
+
+        PictureBox? picLogo = null;
+        var appLogo = AppIconHelper.GetAppBitmap(32);
+        if (appLogo != null)
+        {
+            picLogo = new PictureBox
+            {
+                Image = appLogo,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Width = 34,
+                Height = 34,
+                Dock = DockStyle.Left,
+                BackColor = Color.Transparent
+            };
+            picLogo.Disposed += (_, _) => picLogo.Image?.Dispose();
+        }
 
         var headerBtnFlow = new FlowLayoutPanel
         {
@@ -145,6 +163,10 @@ public class MainDashboardForm : Form
         headerBtnFlow.Controls.Add(_btnAbout);
 
         headerPanel.Controls.Add(_lblTitle);
+        if (picLogo != null)
+        {
+            headerPanel.Controls.Add(picLogo);
+        }
         headerPanel.Controls.Add(headerBtnFlow);
 
         // 2. Status Hero Banner (Dock Top below Header)
@@ -156,9 +178,9 @@ public class MainDashboardForm : Form
         CalendarPanel = new CalendarPanel(_apiClient)
         {
             Dock = DockStyle.Bottom,
-            Height = 210,
             BorderStyle = BorderStyle.FixedSingle
         };
+        CalendarPanel.Height = Math.Max(252, CalendarPanel.GetPreferredHeight(6));
         CalendarPanel.OnDaySelected += async cell => await ShowDayDetailAsync(cell);
         DayDetailShower = form => form.ShowDialog(this);
         AboutDialogShower = form => form.ShowDialog(this);
@@ -198,6 +220,7 @@ public class MainDashboardForm : Form
         Controls.Add(CalendarPanel);
         Controls.Add(StatusBanner);
         Controls.Add(headerPanel);
+        MainSplitContainer.BringToFront();
 
         // 5. Polling Timer (60s)
         PollingTimer = new System.Windows.Forms.Timer

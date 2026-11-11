@@ -175,4 +175,122 @@ public class SetupWizardDialogTests
             Assert.NotEmpty(handler.SentRequests);
         });
     }
+
+    [Fact]
+    public void TestWizardLayout_HeaderAndNavDoNotOverlapStepContent()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("""{"current_step": 0, "completed_steps": [], "step_data": {}}""");
+            var client = new BackendApiClient(new HttpClient(handler));
+
+            using var dialog = new SetupWizardDialog(client);
+            dialog.CreateControl();
+            dialog.PerformLayout();
+
+            var indicator = dialog.StepIndicator;
+            var contentContainer = dialog.StepPanels[0].Parent!;
+            var navPanel = dialog.BackButton.Parent!;
+
+            Assert.True(
+                contentContainer.Top >= indicator.Bottom,
+                $"Content container Top ({contentContainer.Top}) overlaps StepIndicator Bottom ({indicator.Bottom}).");
+            Assert.True(
+                contentContainer.Bottom <= navPanel.Top,
+                $"Content container Bottom ({contentContainer.Bottom}) overlaps navPanel Top ({navPanel.Top}).");
+
+            Control[] hostedPanels =
+            [
+                dialog.GeminiCard,
+                dialog.FolderPanel,
+                dialog.RolePanel,
+                dialog.FrequencyPanel,
+                dialog.SubmissionModePanel,
+                dialog.SummaryPanel
+            ];
+
+            for (int step = 0; step < dialog.StepCount; step++)
+            {
+                dialog.GoToStep(step);
+                dialog.PerformLayout();
+
+                var stepPanel = dialog.StepPanels[step];
+                stepPanel.PerformLayout();
+
+                var labels = stepPanel.Controls.OfType<Label>().OrderBy(l => l.Top).ToList();
+                Assert.True(labels.Count >= 2, $"Step {step} expected title and subtitle labels.");
+                var titleLabel = labels[0];
+                var subtitleLabel = labels[1];
+
+                Assert.True(titleLabel.Top >= 0, $"Step {step} title Top ({titleLabel.Top}) < 0.");
+                Assert.True(
+                    subtitleLabel.Top >= titleLabel.Bottom,
+                    $"Step {step} subtitle Top ({subtitleLabel.Top}) < title Bottom ({titleLabel.Bottom}).");
+                Assert.True(
+                    hostedPanels[step].Top >= subtitleLabel.Bottom,
+                    $"Step {step} hosted panel Top ({hostedPanels[step].Top}) < subtitle Bottom ({subtitleLabel.Bottom}).");
+            }
+
+            // Step 0 additionally stacks RequirementListPanel below GeminiCredentialsCard
+            dialog.GoToStep(0);
+            dialog.StepPanels[0].PerformLayout();
+            Assert.True(
+                dialog.RequirementPanel.Top >= dialog.GeminiCard.Bottom,
+                $"RequirementPanel Top ({dialog.RequirementPanel.Top}) < GeminiCard Bottom ({dialog.GeminiCard.Bottom}).");
+        });
+    }
+
+    [Fact]
+    public void TestStepIndicator_AllLabelsFitWithoutWrappingOrVerticalMisalignment()
+    {
+        RunSta(() =>
+        {
+            var handler = new MockHttpMessageHandler("""{"current_step": 0, "completed_steps": [], "step_data": {}}""");
+            var client = new BackendApiClient(new HttpClient(handler));
+
+            using var dialog = new SetupWizardDialog(client);
+            dialog.CreateControl();
+            dialog.PerformLayout();
+
+            // Verify at default size and minimum width across every active step (0..5)
+            foreach (var testWidth in new[] { dialog.Width, dialog.MinimumSize.Width })
+            {
+                dialog.Width = testWidth;
+                dialog.PerformLayout();
+
+                for (int activeStep = 0; activeStep < dialog.StepCount; activeStep++)
+                {
+                    var completed = Enumerable.Range(0, activeStep).ToArray();
+                    dialog.StepIndicator.UpdateStep(activeStep, completed);
+                    dialog.StepIndicator.PerformLayout();
+
+                    var table = dialog.StepIndicator.Controls.OfType<TableLayoutPanel>().Single();
+                    var labels = table.Controls.OfType<Label>().OrderBy(l => l.Left).ToList();
+                    Assert.Equal(6, labels.Count);
+
+                    var expectedTop = labels[0].Top;
+                    var expectedHeight = labels[0].Height;
+                    foreach (var lbl in labels)
+                    {
+                        Assert.Equal(expectedTop, lbl.Top);
+                        Assert.Equal(expectedHeight, lbl.Height);
+                        Assert.False(lbl.UseMnemonic);
+
+                        var singleLineSize = TextRenderer.MeasureText(
+                            lbl.Text,
+                            lbl.Font,
+                            new Size(int.MaxValue, int.MaxValue),
+                            TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+
+                        Assert.True(
+                            singleLineSize.Width <= lbl.ClientSize.Width - lbl.Padding.Horizontal,
+                            $"At width={testWidth}, step={activeStep}, label '{lbl.Text}' width ({singleLineSize.Width}px) exceeds inner cell width ({lbl.ClientSize.Width - lbl.Padding.Horizontal}px).");
+                        Assert.True(
+                            singleLineSize.Height <= lbl.ClientSize.Height,
+                            $"At width={testWidth}, step={activeStep}, label '{lbl.Text}' height ({singleLineSize.Height}px) exceeds cell height ({lbl.ClientSize.Height}px).");
+                    }
+                }
+            }
+        });
+    }
 }
