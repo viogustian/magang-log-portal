@@ -1,4 +1,8 @@
-# MagangLog Portal (v2.0)
+<p align="center">
+  <img src="icon.png" alt="MagangLog Portal Logo" width="180" />
+</p>
+
+<h1 align="center">MagangLog Portal (v2.0)</h1>
 
 Aplikasi desktop Windows (*standalone installer*) dan otomasi CLI untuk membantu menyusun, meninjau, dan mengisi laporan harian logbook di portal **MagangHub Monev** secara rapi, aman, dan terverifikasi.
 
@@ -123,11 +127,54 @@ Seluruh perintah CLI juga tersedia untuk pengguna tingkat lanjut (baik lewat `ba
 
 ---
 
-## Keamanan & Privasi Data
+## Arsitektur Privasi Data, Etika AI (Gemini) & Guardrails Keamanan
 
-- **Penyimpanan Lokal:** Kunci API Gemini (`.env`), konfigurasi pribadi (`config/config.yaml`), sesi login (`data/auth/state.json`), database ledger (`data/state.db`), dan log (`data/logs/`) disimpan **sepenuhnya di komputer Anda** dan dikecualikan dari Git melalui `.gitignore`.
-- **Server Loopback Ketat:** Backend FastAPI hanya mengikat alamat lokal (`127.0.0.1`) dan tidak terbuka ke jaringan luar.
-- **Anti-Pemalsuan:** Aplikasi tidak pernah memalsukan lokasi perangkat maupun mencentang pernyataan kirim otomatis tanpa persetujuan eksplisit Anda (`approved_at`).
+Aplikasi ini dibangun dengan prinsip **Privacy by Design**, **Zero Surveillance Boundary**, dan **Human-in-the-Loop**. Seluruh pembatasan berikut ditegakkan langsung di level kode Python (bukan sekadar aturan prompt):
+
+### 1. Sanitasi Privasi Deterministik Pra-LLM ([`collectors/privacy.py`](src/magang_log/collectors/privacy.py))
+Sebelum bukti aktivitas apa pun dikirim ke Gemini API, fungsi `collect_and_sanitize_evidence()` ([`collectors/factory.py`](src/magang_log/collectors/factory.py)) menjalankan `DeterministicPrivacyEngine` dengan urutan 8 tahap deterministik:
+1. **Penyaringan Password (`redact_passwords=True`):** Assignment seperti `password=...` atau `password:...` otomatis diganti menjadi `[REDACTED_PASSWORD]`.
+2. **Penyaringan Token & API Key (`redact_tokens=True`):** Regex khusus mendeteksi dan menyensor Bearer token, GitHub PAT (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), Slack token (`xox[baprs]-`), GitLab PAT (`glpat-`), AWS Access Key (`AKIA...`), prefix key `sk-...`, serta parameter `api_key`, `access_token`, `auth_token`, `secret_key`, dan `token` menjadi `[REDACTED_TOKEN]`.
+3. **Penyaringan Email (`redact_emails=True`):** Alamat email disensor menjadi `[REDACTED_EMAIL]`.
+4. **Penyaringan IPv4 Privat (`redact_ips=True`):** Alamat jaringan internal (`10.x.x.x`, `172.16.x.x`–`172.31.x.x`, `192.168.x.x`) disensor menjadi `[REDACTED_IP]`.
+5. **Relativisasi Path Lokal (`redact_paths=True`):** Path absolut Windows (`C:\...`, `Program Files`) dan Unix (`/home/...`, `/Users/...`) diubah menjadi path relatif terhadap `repo_roots`, atau diganti `[REDACTED_PATH]` bila berada di luar direktori proyek kerja.
+6. **Penyaringan Username OS (`redact_usernames=True`):** Mendeteksi nama pengguna sistem dari variabel lingkungan (`USERNAME`, `USER`, `LOGNAME`), `getpass.getuser()`, `os.getlogin()`, maupun `custom_usernames` lalu menyensornya menjadi `[USER]`.
+7. **Aturan Kustom (`custom_rules`):** Mendukung pola regex penyensoran tambahan sesuai kebijakan instansi/perusahaan Anda.
+8. **Pembatasan Panjang Teks:** Membatasi `max_title_length` maksimal `300` karakter dan `max_detail_length` maksimal `1000` karakter serta menghitung ulang ID bukti setelah disanitasi.
+
+> Anda dapat memeriksa payload JSON final yang telah disanitasi sebelum dikirim ke Gemini dengan menjalankan `magang-log preview-payload`.
+
+### 2. Minimasi Data & *Zero Surveillance Boundary* pada Kolektor
+- **Git Lokal ([`collectors/git.py`](src/magang_log/collectors/git.py), [`settings.py`](src/magang_log/settings.py)):** Secara bawaan `include_diff: False` dan `send_to_llm: ["commit_message", "file_paths_relative"]`. Kolektor hanya mengambil metadata commit (`git show --no-patch`) dan statistik berkas relatif (`--numstat`) — **isi *source code* maupun *diff patch* proyek perusahaan tidak dikirim ke AI**.
+- **Riwayat Browser ([`collectors/browser.py`](src/magang_log/collectors/browser.py)):** Dinonaktifkan secara default (`enabled: False`). Bila diaktifkan:
+  - Hanya domain pada daftar izin (*allowlist*) yang diambil melalui `is_domain_allowed()` — seluruh riwayat domain lain diabaikan.
+  - Database `History` disalin ke berkas snapshot sementara dan dibuka dalam mode read-only `sqlite3` (`?immutable=1`) lalu langsung dihapus (`unlink`).
+  - Fungsi `sanitize_url()` menghapus seluruh *query string* (`?...`) dan *hash fragment* (`#...`) agar token sesi atau parameter privat di URL tidak pernah terbawa.
+- **Aktivitas Aplikasi Desktop ([`collectors/app.py`](src/magang_log/collectors/app.py), [`recent.py`](src/magang_log/collectors/recent.py), [`session_log.py`](src/magang_log/collectors/session_log.py)):** Menerapkan *strict opt-in allowlist* berdasarkan ekstensi file dan proses di `WorkProfile`. Tanpa `WorkProfile` aktif, kolektor mengembalikan hasil kosong (*zero surveillance boundary*). Path direktori pengguna (`C:\Users\<user>`) disingkat menjadi `~` lewat `sanitize_path()`, dan detail log sesi disaring melalui `sanitize_log_detail()` (`SENSITIVE_PARAM_REGEX` → `[REDACTED]`).
+- **Evidence Strength Gate ([`collectors/strength.py`](src/magang_log/collectors/strength.py)):** Fungsi `evaluate_evidence_strength()` memblokir pemanggilan Gemini (`PERLU_INPUT`, exit code `10`) jika tidak ada minimal 1 bukti kategori `strong` (commit Git atau catatan manual), dan `filter_evidence_for_llm()` menghormati saklar `send_to_llm` per sumber.
+
+### 3. Etika AI (Google Gemini) & Guardrails Generasi Draf
+- **Klien REST Tanpa Akses Eksekusi Tool ([`drafter/client.py`](src/magang_log/drafter/client.py)):** `GeminiModelClient` menghubungi endpoint resmi Gemini `generateContent` dengan keluaran JSON terstruktur (`response_mime_type: "application/json"`) **tanpa kemampuan *tool calling* / eksekusi sistem** (`tools: None`). Model tidak bisa membaca file di luar payload, menjalankan perintah shell, atau mengirim form sendiri. API Key dikirim lewat header `x-goog-api-key` (bukan query URL), dengan batas default `max_input_tokens: 6000` dan `daily_token_budget: 20000` ([`settings.py`](src/magang_log/settings.py)).
+- **Anti-Halusinasi & Anti-Filler ([`prompts/draft_logbook.v1.md`](prompts/draft_logbook.v1.md), [`drafter/engine.py`](src/magang_log/drafter/engine.py)):**
+  - *Hard constraint* melarang AI mengarang kegiatan di luar bukti atau memakai kalimat klise (*boilerplate* seperti *"berjalan lancar tanpa kendala"*).
+  - Bila bukti tidak memuat kendala atau pembelajaran nyata, `EvidenceDrafter` otomatis menambahkan kolom terkait ke daftar `needs_input` agar dilengkapi manusia (bukan dikarang oleh AI).
+- **Pertahanan terhadap *Prompt Injection* ([`drafter/engine.py`](src/magang_log/drafter/engine.py)):** Seluruh bukti dibungkus dalam blok `<bukti>...</bukti>` sebagai *untrusted passive data*, dengan instruksi tegas kepada model untuk mengabaikan perintah atau instruksi manipulasi peran yang mungkin terselip di dalam pesan commit maupun catatan.
+- **Validator Deterministik & *Self-Correction Loop* ([`validator/engine.py`](src/magang_log/validator/engine.py), [`validator/rules.py`](src/magang_log/validator/rules.py), [`drafter/stage.py`](src/magang_log/drafter/stage.py)):** Setiap keluaran Gemini diperiksa oleh `MultiStageValidator` (maksimal `max_retries=2` di `DraftingStage`):
+  - Memastikan panjang teks tiap kolom `100`–`5000` karakter.
+  - Menolak format terlarang: kode Markdown (`` ``` ``, `` ` ``), bullet point (`*`, `-`, `+`, `•`), tag HTML, URL mentah, dan email.
+  - Mendeteksi *canned filler* (`CANNED_FILLER_PHRASES`), keragaman leksikal rendah (`compute_lexical_diversity` `< 0.4`), serta pengulangan kalimat/trigram berlebih (`compute_repetition_ratio` `> 0.3`).
+  - Menghitung **Grounding Score** (`compute_grounding_score()`) guna mengecek keterhubungan kalimat `aktivitas` terhadap ID bukti terverifikasi.
+- **Kendali Manusia (*Human-in-the-Loop*) ([`reviewer/auto_approval.py`](src/magang_log/reviewer/auto_approval.py), [`settings.py`](src/magang_log/settings.py)):** Secara default `review.mode` bernilai `"review"` dan `auto_if_confident` bernilai `False`. Bahkan jika diaktifkan, `ConditionalAutoApprovalEngine` hanya meloloskan draf apabila `validation.is_valid == True`, `len(warnings) == 0`, `grounding_score >= 0.8`, sudah ada minimal `10` riwayat entri yang disetujui manusia, serta median rasio suntingan manusia historis `<= 0.15`.
+
+### 4. Keamanan Server Lokal, Audit Log & Anti-Tamper Portal
+- **Server Loopback Ketat ([`server/config.py`](src/magang_log/server/config.py)):** `ServerConfig` mewajibkan `is_loopback(host)` saat startup (`127.0.0.1`, `localhost`, atau IP loopback valid lain) dan melempar `ValueError` bila ada upaya binding ke antarmuka jaringan eksternal.
+- **Privacy Guard pada Logging ([`logger.py`](src/magang_log/logger.py)):** `check_privacy_guard()` melarang penulisan field privat (`PROHIBITED_INFO_FIELDS`: `aktivitas`, `pembelajaran`, `kendala`, `draft`, `evidence`, `secret`, `password`, `token`, `api_key`, dll.) pada log level `INFO` (`data/logs/magang-log.jsonl`) dan memicu `PrivacyViolationError` bila dilanggar.
+- **Proteksi Sesi & Anti-Tamper Portal ([`portal/session.py`](src/magang_log/portal/session.py), [`portal/anti_tamper.py`](src/magang_log/portal/anti_tamper.py), [`portal/device_location.py`](src/magang_log/portal/device_location.py), [`portal/playwright_portal.py`](src/magang_log/portal/playwright_portal.py)):**
+  - **Tanpa Penyimpanan Password/OTP:** Login ke portal MagangHub dilakukan interaktif langsung oleh pengguna; sesi tersimpan lokal di `data/auth/state.json` (dengan `os.chmod(..., 0o600)` di POSIX).
+  - **Fail-Closed Anti-Tamper Gate:** `AntiTamperGate.inspect()` mengevaluasi `aria-label` dan atribut `disabled` tombol hari di kalender sebelum menyentuh form — hari berstatus `LIBUR`, `TERKUNCI`, `SUDAH_TERKIRIM`, `PERLU_TINDAKAN`, atau `TIDAK_DIKENAL` langsung menghentikan proses.
+  - **Lokasi Asli Perangkat (Tanpa Spoofing):** `get_windows_device_location()` membaca koordinat fisik perangkat melalui sensor OS Windows (`System.Device.Location.GeoCoordinateWatcher`), dan izin geolocation hanya diberikan ke origin portal. Jika lokasi gagal terbaca, pengiriman dihentikan dengan status `LOKASI_TIDAK_TERSEDIA`.
+  - **Gerbang Persetujuan & Verifikasi Server:** `assert_approved_for_submission()` memblokir pengiriman apabila `approved_at` kosong (perlu persetujuan eksplisit di UI atau ketik `Y`/`YES`/`SETUJU` di CLI). Setelah submit, `_verify_after_submit()` memuat ulang halaman dari server untuk memverifikasi perubahan status secara nyata.
+- **Isolasi Penyimpanan Lokal ([`.gitignore`](.gitignore)):** Direktori `data/`, database `*.db`/`state.db`, `state.json`, `.env`, `config.yaml`, `wizard-progress.yaml`, kunci/sertifikat (`*.pem`, `*.key`), dan log dikecualikan dari Git agar tidak pernah bocor ke repositori.
 
 ---
 
