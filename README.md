@@ -8,8 +8,6 @@ MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git co
 
 ## Fitur Utama
 
-- **1x Instal Langsung Jalan:** Installer `.exe` sudah membundle runtime **Desktop (.NET 8)** maupun **Backend (Python + FastAPI + Playwright)** secara mandiri — pengguna umum tidak perlu menginstal Python, .NET SDK, atau mengaktifkan virtual environment.
-- **Setup Wizard 6 Langkah:** Panduan instalasi awal terpadu untuk cek prasyarat, tes koneksi Gemini API Key, pilih folder proyek Git, atur profil kerja, privasi, hingga penjadwalan otomatis.
 - **Dashboard Lokal Desktop:** Tampilan kalender bulanan, feed bukti aktivitas harian, editor draf *inline* (validasi minimal 100 & maksimal 5.000 karakter), catatan refleksi cepat, dan pengaturan lengkap.
 - **Pengumpul Bukti & Sanitasi Privasi:** Mengumpulkan bukti dari Git commit, catatan manual, aplikasi aktif, dan domain browser yang diizinkan — seluruh path sensitif, username, dan rahasia/token disaring secara deterministik sebelum dikirim ke LLM.
 - **Portal Automation Anti-Tamper:** Login manual sekali untuk OTP/CAPTCHA, verifikasi status hari di kalender (hari libur nasional, terkunci, atau sudah terkirim tidak disentuh), cek lokasi perangkat, serta verifikasi ulang dari server setelah submit.
@@ -17,7 +15,7 @@ MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git co
 
 ---
 
-## Cara 1: Instalasi Pengguna Umum (1x Klik via Installer `.exe`)
+## Cara 1: Instalasi Pengguna Umum (via Installer `.exe`)
 
 ### Kebutuhan Minimum di Laptop Pengguna
 1. **Windows 10 / Windows 11 (64-bit).**
@@ -33,7 +31,7 @@ MagangLog Portal menggabungkan **pengumpul bukti aktivitas kerja lokal** (Git co
    - Jika muncul peringatan **Windows Defender SmartScreen** (*"Windows protected your PC"*), klik **More info** → **Run anyway** *(wajar untuk aplikasi open-source tanpa sertifikat tanda tangan berbayar)*.
    - Klik **Next → Install → Finish** *(bisa diinstal per-user tanpa hak Administrator)*.
 3. Buka aplikasi **MagangLog Portal** dari Start Menu atau ikon Desktop.
-4. Saat pertama kali dibuka, **Setup Wizard (6 Langkah)** akan muncul otomatis:
+4. Jalankan **Setup Wizard** lalu lakukan:
    - **Langkah 1 (Sistem & Gemini API):** Pastikan status requirement siap, lalu masukkan **Gemini API Key** Anda dan klik tes koneksi.
    - **Langkah 2 (Folder Proyek):** Pilih folder proyek/repositori Git tempat Anda bekerja.
    - **Langkah 3 (Profil Kerja & Kata Kunci):** Pilih bidang/peran magang Anda (atau gunakan preset bawaan seperti *Software Engineer*, dll.).
